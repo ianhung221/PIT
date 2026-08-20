@@ -1,22 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluatePitContact } from "../lib/gameRules.ts";
+import { evaluatePitContact, evaluatePitOutcome, steeringInput } from "../lib/gameRules.ts";
 
-test("accepts a rear-quarter contact with enough closing speed", () => {
-  const result = evaluatePitContact({ dx: 1.1, dz: 0.2, relativeSpeed: 6, grip: 1, cooldown: 0 });
+const baseContact = {
+  localX: 1.7,
+  localZ: 1.4,
+  suspectHalfWidth: 1,
+  suspectHalfLength: 2.2,
+  closingSpeed: 6,
+  headingDelta: .1,
+  cooldown: 0,
+  hasCandidate: false,
+};
+
+test("maps left and right input to distinct correct steering signs", () => {
+  assert.equal(steeringInput(true, false), -1);
+  assert.equal(steeringInput(false, true), 1);
+  assert.equal(steeringInput(true, true), 0);
+});
+
+test("accepts a properly aligned rear-quarter contact", () => {
+  const result = evaluatePitContact(baseContact);
   assert.equal(result.valid, true);
-  assert.ok(result.pitGain > 45);
-  assert.ok(result.spinImpulse < 0);
+  assert.equal(result.side, 1);
 });
 
-test("rejects direct rear impacts, slow contact and cooldown repeats", () => {
-  assert.equal(evaluatePitContact({ dx: 0.2, dz: 0, relativeSpeed: 8, grip: 1, cooldown: 0 }).valid, false);
-  assert.equal(evaluatePitContact({ dx: 1, dz: 0, relativeSpeed: 1, grip: 1, cooldown: 0 }).valid, false);
-  assert.equal(evaluatePitContact({ dx: 1, dz: 0, relativeSpeed: 8, grip: 1, cooldown: 0.2 }).valid, false);
+test("rejects rear impacts, front-side hits, bad headings and unsafe closing speeds", () => {
+  assert.equal(evaluatePitContact({ ...baseContact, localX: .2 }).reason, "contact-zone");
+  assert.equal(evaluatePitContact({ ...baseContact, localZ: -.5 }).reason, "contact-zone");
+  assert.equal(evaluatePitContact({ ...baseContact, headingDelta: 1.1 }).reason, "heading");
+  assert.equal(evaluatePitContact({ ...baseContact, closingSpeed: 25 }).reason, "closing-speed");
 });
 
-test("wet surfaces produce a stronger spin impulse", () => {
-  const dry = evaluatePitContact({ dx: -1, dz: 0, relativeSpeed: 5, grip: 1, cooldown: 0 });
-  const snow = evaluatePitContact({ dx: -1, dz: 0, relativeSpeed: 5, grip: 0.58, cooldown: 0 });
-  assert.ok(Math.abs(snow.spinImpulse) > Math.abs(dry.spinImpulse));
+test("prevents repeated scoring during cooldown or an active PIT evaluation", () => {
+  assert.equal(evaluatePitContact({ ...baseContact, cooldown: .2 }).reason, "cooldown");
+  assert.equal(evaluatePitContact({ ...baseContact, hasCandidate: true }).reason, "active");
+});
+
+test("requires both a meaningful spin and loss of control for PIT success", () => {
+  const glance = evaluatePitOutcome(0, .3, 30, 27, 1);
+  assert.equal(glance.success, false);
+  const pit = evaluatePitOutcome(0, 1.1, 30, 18, 2);
+  assert.equal(pit.success, true);
+  assert.equal(pit.progress, 100);
 });

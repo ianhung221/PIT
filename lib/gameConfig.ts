@@ -18,9 +18,22 @@ export const WEATHER = {
 } as const;
 
 export const VEHICLES = {
-  patrol: { label: "巡邏轎車", acceleration: 16, maxSpeed: 43, steering: 1.8, mass: 1.05, color: "#e8ecee" },
-  interceptor: { label: "攔截跑車", acceleration: 20, maxSpeed: 52, steering: 2.05, mass: 0.9, color: "#f1f2ed" },
-  suv: { label: "警用 SUV", acceleration: 13, maxSpeed: 39, steering: 1.45, mass: 1.35, color: "#d9dfe0" },
+  patrol: { label: "巡邏轎車", acceleration: 16, maxSpeed: 43, steering: 1.8, mass: 1.05, width: 2.05, height: .65, length: 4.45, color: "#e8ecee" },
+  interceptor: { label: "攔截跑車", acceleration: 20, maxSpeed: 52, steering: 2.05, mass: .9, width: 1.95, height: .55, length: 4.5, color: "#f1f2ed" },
+  suv: { label: "警用 SUV", acceleration: 13, maxSpeed: 39, steering: 1.45, mass: 1.35, width: 2.15, height: .78, length: 4.6, color: "#d9dfe0" },
+} as const;
+
+export const SUSPECT = { mass: 1, width: 2, height: .62, length: 4.4, color: "#8d261b" } as const;
+
+export const PIT_RULES = {
+  rearZoneStart: .28,
+  sideZoneStart: .52,
+  minClosingSpeed: 1.5,
+  maxClosingSpeed: 18,
+  maxHeadingDelta: Math.PI * 35 / 180,
+  requiredYawChange: Math.PI * 55 / 180,
+  requiredSpeedDrop: .35,
+  evaluationWindow: 2.5,
 } as const;
 
 export const SCENES = {
