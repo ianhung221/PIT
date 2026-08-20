@@ -24,12 +24,60 @@ export interface PitOutcome {
   speedDrop: number;
 }
 
+export type SuspectRecoveryMode = "driving" | "braking" | "reversing" | "realigning";
+
+export interface SuspectRecoveryInput {
+  planarSpeed: number;
+  forwardSpeed: number;
+  yawError: number;
+  boundaryRatio: number;
+  stalledFor: number;
+  pitActive: boolean;
+}
+
+export const SUSPECT_RECOVERY = {
+  stuckSpeed: 1.25,
+  stuckDelay: 1,
+  brakingTime: .35,
+  reversingTime: 1.25,
+  realignTimeout: 2.4,
+  alignedYaw: Math.PI * 14 / 180,
+} as const;
+
 export function steeringInput(left: boolean, right: boolean): number {
   return (right ? 1 : 0) - (left ? 1 : 0);
 }
 
 export function normalizeAngle(angle: number): number {
   return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
+export function isSuspectRecoveryNeeded(input: SuspectRecoveryInput): boolean {
+  if (input.pitActive || input.stalledFor < SUSPECT_RECOVERY.stuckDelay) return false;
+  const obstructed = input.boundaryRatio >= .72 || Math.abs(input.yawError) >= Math.PI * 48 / 180 || input.forwardSpeed < -.5;
+  return input.planarSpeed < SUSPECT_RECOVERY.stuckSpeed && obstructed;
+}
+
+export function suspectForwardSpeedScale(yawError: number): number {
+  const error = Math.abs(normalizeAngle(yawError));
+  if (error >= Math.PI * 78 / 180) return 0;
+  if (error <= Math.PI * 18 / 180) return 1;
+  return 1 - (error - Math.PI * 18 / 180) / (Math.PI * 60 / 180) * .82;
+}
+
+export function suspectReverseEscapeYaw(lateralPosition: number): number {
+  if (Math.abs(lateralPosition) < .1) return 0;
+  return -Math.sign(lateralPosition) * Math.PI * 35 / 180;
+}
+
+export function nextSuspectRecoveryMode(mode: SuspectRecoveryMode, modeElapsed: number, yawError: number, forwardSpeed: number): SuspectRecoveryMode {
+  if (mode === "braking" && modeElapsed >= SUSPECT_RECOVERY.brakingTime) return "reversing";
+  if (mode === "reversing" && modeElapsed >= SUSPECT_RECOVERY.reversingTime) return "realigning";
+  if (mode === "realigning") {
+    if (Math.abs(normalizeAngle(yawError)) <= SUSPECT_RECOVERY.alignedYaw && forwardSpeed >= 1.5) return "driving";
+    if (modeElapsed >= SUSPECT_RECOVERY.realignTimeout) return "braking";
+  }
+  return mode;
 }
 
 export function evaluatePitContact(contact: PitContact): PitContactResult {

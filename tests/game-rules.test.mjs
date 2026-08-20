@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluatePitContact, evaluatePitOutcome, steeringInput } from "../lib/gameRules.ts";
+import {
+  evaluatePitContact,
+  evaluatePitOutcome,
+  isSuspectRecoveryNeeded,
+  nextSuspectRecoveryMode,
+  steeringInput,
+  suspectForwardSpeedScale,
+  suspectReverseEscapeYaw,
+} from "../lib/gameRules.ts";
 
 const baseContact = {
   localX: 1.7,
@@ -43,4 +51,35 @@ test("requires both a meaningful spin and loss of control for PIT success", () =
   const pit = evaluatePitOutcome(0, 1.1, 30, 18, 2);
   assert.equal(pit.success, true);
   assert.equal(pit.progress, 100);
+});
+
+test("starts recovery only after a genuine stall and never during PIT evaluation", () => {
+  const stalled = { planarSpeed: .4, forwardSpeed: .2, yawError: 1.1, boundaryRatio: .84, stalledFor: 1.1, pitActive: false };
+  assert.equal(isSuspectRecoveryNeeded(stalled), true);
+  assert.equal(isSuspectRecoveryNeeded({ ...stalled, stalledFor: .5 }), false);
+  assert.equal(isSuspectRecoveryNeeded({ ...stalled, pitActive: true }), false);
+  assert.equal(isSuspectRecoveryNeeded({ ...stalled, planarSpeed: 5 }), false);
+});
+
+test("does not mistake an ordinary straight-line slowdown for being stuck", () => {
+  assert.equal(isSuspectRecoveryNeeded({ planarSpeed: .6, forwardSpeed: .6, yawError: .1, boundaryRatio: .2, stalledFor: 2, pitActive: false }), false);
+});
+
+test("runs recovery through braking, reversing, realigning and driving", () => {
+  assert.equal(nextSuspectRecoveryMode("braking", .4, 1.1, 0), "reversing");
+  assert.equal(nextSuspectRecoveryMode("reversing", 1.3, .8, -4), "realigning");
+  assert.equal(nextSuspectRecoveryMode("realigning", .8, .1, 2), "driving");
+  assert.equal(nextSuspectRecoveryMode("realigning", 2.5, .8, .3), "braking");
+});
+
+test("reduces throttle as the suspect points away from the road", () => {
+  assert.equal(suspectForwardSpeedScale(0), 1);
+  assert.ok(suspectForwardSpeedScale(.8) > 0 && suspectForwardSpeedScale(.8) < 1);
+  assert.equal(suspectForwardSpeedScale(Math.PI / 2), 0);
+});
+
+test("backs the rear of the suspect away from either guardrail", () => {
+  assert.ok(suspectReverseEscapeYaw(6) < 0);
+  assert.ok(suspectReverseEscapeYaw(-6) > 0);
+  assert.equal(suspectReverseEscapeYaw(0), 0);
 });

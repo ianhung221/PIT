@@ -23,11 +23,23 @@ import {
   WEATHER,
   type CameraMode,
 } from "@/lib/gameConfig";
-import { evaluatePitContact, evaluatePitOutcome, normalizeAngle, steeringInput } from "@/lib/gameRules";
+import {
+  evaluatePitContact,
+  evaluatePitOutcome,
+  isSuspectRecoveryNeeded,
+  nextSuspectRecoveryMode,
+  normalizeAngle,
+  SUSPECT_RECOVERY,
+  steeringInput,
+  suspectForwardSpeedScale,
+  suspectReverseEscapeYaw,
+  type SuspectRecoveryMode,
+} from "@/lib/gameRules";
 
 type Result = "playing" | "success" | "failed" | "paused";
 type CarSnapshot = { x: number; z: number; yaw: number; speed: number; lateralSpeed: number };
 type PitCandidate = { startYaw: number; startSpeed: number; expires: number; side: -1 | 1 };
+type SuspectAiState = { mode: SuspectRecoveryMode; modeElapsed: number; stalledFor: number };
 type Runtime = {
   player: CarSnapshot;
   suspect: CarSnapshot;
@@ -35,6 +47,7 @@ type Runtime = {
   pit: number;
   collisionCooldown: number;
   pitCandidate: PitCandidate | null;
+  suspectAi: SuspectAiState;
   result: Result;
 };
 
@@ -49,6 +62,7 @@ function makeRuntime(config: MissionConfig): Runtime {
     pit: 0,
     collisionCooldown: 0,
     pitCandidate: null,
+    suspectAi: { mode: "driving", modeElapsed: 0, stalledFor: 0 },
     result: "playing",
   };
 }
@@ -345,12 +359,49 @@ function VehicleSimulation({
     const targetX = THREE.MathUtils.clamp(laneTarget + boundaryPressure, -roadLimit * .78, roadLimit * .78);
     const desiredYaw = Math.atan2(-(targetX - suspectPosition.x), 42);
     const yawError = normalizeAngle(desiredYaw - suspectFrame.yaw);
+    const planarSuspectSpeed = Math.hypot(suspectFrame.velocityX, suspectFrame.velocityZ);
+    const boundaryRatio = Math.abs(suspectPosition.x) / Math.max(.1, roadLimit);
+    const ai = state.suspectAi;
+    const looksStuck = planarSuspectSpeed < SUSPECT_RECOVERY.stuckSpeed && (boundaryRatio >= .72 || Math.abs(yawError) >= Math.PI * 48 / 180 || suspectFrame.forwardSpeed < -.5);
+    ai.stalledFor = !state.pitCandidate && looksStuck ? ai.stalledFor + dt : Math.max(0, ai.stalledFor - dt * 2);
+    if (ai.mode === "driving" && isSuspectRecoveryNeeded({
+      planarSpeed: planarSuspectSpeed,
+      forwardSpeed: suspectFrame.forwardSpeed,
+      yawError,
+      boundaryRatio,
+      stalledFor: ai.stalledFor,
+      pitActive: state.pitCandidate !== null,
+    })) {
+      ai.mode = "braking";
+      ai.modeElapsed = 0;
+      ai.stalledFor = 0;
+    }
+    if (ai.mode !== "driving" && !state.pitCandidate) {
+      ai.modeElapsed += dt;
+      const nextMode = nextSuspectRecoveryMode(ai.mode, ai.modeElapsed, yawError, suspectFrame.forwardSpeed);
+      if (nextMode !== ai.mode) {
+        ai.mode = nextMode;
+        ai.modeElapsed = 0;
+        if (nextMode === "driving") ai.stalledFor = 0;
+      }
+    }
     const candidateControl = state.pitCandidate ? .12 : 1;
-    const targetAngVel = THREE.MathUtils.clamp(yawError * 2.6, -.7, .7);
+    const effectiveMode = state.pitCandidate ? "driving" : ai.mode;
+    const steeringYaw = effectiveMode === "reversing" ? suspectReverseEscapeYaw(suspectPosition.x) : desiredYaw;
+    const steeringYawError = normalizeAngle(steeringYaw - suspectFrame.yaw);
+    const recoveryTurnLimit = effectiveMode === "reversing" ? .88 : effectiveMode === "realigning" ? .66 : .7;
+    const recoveryTurnGain = effectiveMode === "reversing" ? 3.2 : 2.6;
+    const targetAngVel = THREE.MathUtils.clamp(steeringYawError * recoveryTurnGain, -recoveryTurnLimit, recoveryTurnLimit);
     const currentSuspectAng = suspect.angvel();
-    suspect.setAngvel({ x: 0, y: THREE.MathUtils.lerp(currentSuspectAng.y, targetAngVel, Math.min(1, dt * 2.4 * grip * candidateControl)), z: 0 }, true);
-    const targetSpeed = SCENES[config.scene].aiSpeed * (.86 + grip * .14) + (Math.hypot(suspectPosition.x - runtime.current.player.x, suspectPosition.z - runtime.current.player.z) < 16 ? 3 : 0);
-    const aiAcceleration = THREE.MathUtils.clamp(targetSpeed - suspectFrame.forwardSpeed, -9, 5.5);
+    const steeringResponse = effectiveMode === "reversing" || effectiveMode === "realigning" ? 3.5 : 2.4;
+    suspect.setAngvel({ x: 0, y: THREE.MathUtils.lerp(currentSuspectAng.y, targetAngVel, Math.min(1, dt * steeringResponse * grip * candidateControl)), z: 0 }, true);
+    const pursuitBoost = Math.hypot(suspectPosition.x - runtime.current.player.x, suspectPosition.z - runtime.current.player.z) < 16 ? 3 : 0;
+    const cruiseSpeed = (SCENES[config.scene].aiSpeed * (.86 + grip * .14) + pursuitBoost) * suspectForwardSpeedScale(yawError);
+    let targetSpeed = cruiseSpeed;
+    if (effectiveMode === "braking") targetSpeed = 0;
+    if (effectiveMode === "reversing") targetSpeed = -6 * grip;
+    if (effectiveMode === "realigning") targetSpeed = Math.abs(yawError) > Math.PI * 45 / 180 ? 0 : Math.min(8 * grip, cruiseSpeed);
+    const aiAcceleration = THREE.MathUtils.clamp(targetSpeed - suspectFrame.forwardSpeed, -10, effectiveMode === "reversing" ? 3.5 : 5.5);
     const suspectMass = suspect.mass();
     suspect.applyImpulse({ x: suspectFrame.forwardX * suspectMass * aiAcceleration * dt, y: 0, z: suspectFrame.forwardZ * suspectMass * aiAcceleration * dt }, true);
     const aiLateral = -suspectFrame.lateralSpeed * suspectMass * Math.min(1, grip * 7 * dt * candidateControl);
