@@ -37,5 +37,5 @@
 - [x] 補齊 AI 脫困與誤判防護測試
 - [x] 執行 lint、正式建置及本地 HTTP 驗證
 - [ ] 使用 Codex 瀏覽器完成實際碰撞操作驗證
-- [/] 重新發布正式網站
-- [/] 更新 walkthrough.md
+- [x] 重新發布正式網站
+- [x] 更新 walkthrough.md
