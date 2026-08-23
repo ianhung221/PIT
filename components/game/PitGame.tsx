@@ -2,7 +2,7 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber uses Three.js JSX properties. */
 /* eslint-disable react-hooks/immutability -- The render loop intentionally updates mutable simulation refs without React renders. */
 
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import {
   CuboidCollider,
   Physics,
@@ -13,6 +13,9 @@ import {
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { CameraRig } from "@/components/game/CameraRig";
+import { CockpitView } from "@/components/game/CockpitView";
+import { VehicleMirrors } from "@/components/game/VehicleMirrors";
 import {
   CAMERA_LABELS,
   MissionConfig,
@@ -205,24 +208,6 @@ function Weather({ config, runtime }: { config: MissionConfig; runtime: React.Mu
     <bufferGeometry><bufferAttribute attach="attributes-position" args={[positions, 3]} /></bufferGeometry>
     <pointsMaterial color={config.weather === "snow" ? "white" : "#9bc6df"} size={config.weather === "snow" ? .12 : .045} transparent opacity={.72} />
   </points>;
-}
-
-function CameraRig({ runtime, mode }: { runtime: React.MutableRefObject<Runtime>; mode: CameraMode }) {
-  const { camera } = useThree();
-  const look = useMemo(() => new THREE.Vector3(), []);
-  const desired = useMemo(() => new THREE.Vector3(), []);
-  useFrame((_, dt) => {
-    const car = runtime.current.player;
-    const forwardX = -Math.sin(car.yaw), forwardZ = -Math.cos(car.yaw);
-    const rightX = Math.cos(car.yaw), rightZ = -Math.sin(car.yaw);
-    if (mode === "driver") desired.set(car.x + forwardX * .45, 1.22, car.z + forwardZ * .45);
-    else if (mode === "auto") desired.set(car.x - forwardX * 9 + rightX * 6, 5.2, car.z - forwardZ * 9 + rightZ * 6);
-    else desired.set(car.x - forwardX * 8, 3.5, car.z - forwardZ * 8);
-    camera.position.lerp(desired, 1 - Math.exp(-dt * (mode === "driver" ? 12 : 5)));
-    look.set(car.x + forwardX * (mode === "driver" ? 18 : 8), mode === "driver" ? .85 : .65, car.z + forwardZ * (mode === "driver" ? 18 : 8));
-    camera.lookAt(look);
-  });
-  return null;
 }
 
 function VehicleSimulation({
@@ -497,7 +482,9 @@ function ChaseScene({ config, runtime, keys, cameraMode, onUpdate, onFinish }: {
       <VehicleSimulation config={config} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <Weather config={config} runtime={runtime} />
-    <CameraRig runtime={runtime} mode={cameraMode} />
+    <CockpitView runtime={runtime} mode={cameraMode} steering={keys} />
+    <VehicleMirrors runtime={runtime} mode={cameraMode} />
+    <CameraRig runtime={runtime} mode={cameraMode} keys={keys} />
   </>;
 }
 

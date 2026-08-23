@@ -3,12 +3,15 @@ export type WeatherId = "clear" | "rain" | "snow";
 export type TimeId = "day" | "night";
 export type VehicleId = "patrol" | "interceptor" | "suv";
 export type CameraMode = "chase" | "driver" | "auto";
+export type QualityId = "low" | "medium" | "high";
 
 export interface MissionConfig {
   scene: SceneId;
   weather: WeatherId;
   time: TimeId;
   vehicle: VehicleId;
+  seed?: string;
+  quality?: QualityId;
 }
 
 export const WEATHER = {
@@ -45,5 +48,18 @@ export const SCENES = {
 export const CAMERA_LABELS: Record<CameraMode, string> = {
   chase: "後方追蹤",
   driver: "駕駛視角",
-  auto: "自動跟車",
+  auto: "直升機視角",
 };
+
+export const CAMERA_SETTINGS = {
+  mirrorFrameSkip: 2,
+  mirrorFar: 95,
+  helicopterMinHeight: 14,
+  helicopterMaxHeight: 32,
+} as const;
+
+export const QUALITY_SETTINGS = {
+  low: { label: "低", dpr: [1, 1] as [number, number], mirrorScale: .5, mirrorFrameSkip: 5, sideMirrors: false },
+  medium: { label: "中", dpr: [1, 1.25] as [number, number], mirrorScale: .72, mirrorFrameSkip: 3, sideMirrors: true },
+  high: { label: "高", dpr: [1, 1.45] as [number, number], mirrorScale: 1, mirrorFrameSkip: 2, sideMirrors: true },
+} as const;
