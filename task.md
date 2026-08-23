@@ -41,7 +41,7 @@
 - [x] 完成 seed、道路模組、程序化路網及導航基礎
 - [x] 導入合法免費代表資產並建立授權清單
 - [/] 執行 lint、build、自動化與瀏覽器互動驗證（內建瀏覽器受 Windows 沙盒初始化錯誤阻擋）
-- [ ] 更新 walkthrough.md 並發布正式新版
+- [x] 更新 walkthrough.md 並發布正式新版
 
 ## Suspect AI Recovery Pass
 
