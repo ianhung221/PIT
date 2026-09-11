@@ -139,3 +139,45 @@
 - 開發模式會重複輸出 Three.js Clock 與陰影類型的棄用警告；目前不影響遊戲畫面或控制，已記錄為 C-004，建議後續獨立處理。
 - 第一輪沒有修改道路接縫、後援 AI、PIT 規則、雪景或漸進式油門／巡航定速；這些維持後續輪次處理。
 - 已於 2026-09-11 發布為 Sites 正式版本 5，沿用原網址與私人存取權限：https://pit-unit-pursuit.ianhung221.chatgpt.site
+
+---
+
+# GitHub Pages 永久發布遷移 Walkthrough（2026-09-11）
+
+## 完成內容
+
+- 建立玩家長期持有的公開儲存庫：https://github.com/ianhung221/PIT
+- 將目前 D:\Ian\PIT 設為該儲存庫的本機工作目錄；main 已追蹤 origin/main，完整保留既有 Git 歷史。
+- 建立 GitHub Pages 靜態輸出流程，正式網址為：https://ianhung221.github.io/PIT/
+- 新增 GitHub Actions 自動部署；後續推送 main 會自動執行 lint、測試、靜態建置、輸出驗證及 Pages 發布。
+- 將客戶端任務設定畫面與靜態伺服器路由分離，避開 Vinext 靜態預渲染限制；沒有更動畫面或玩法。
+- 集中處理 /PIT/ 公開路徑，修正 metadata、favicon、Open Graph、四個 GLB、manifest 與 service worker。
+- manifest 與 service worker 的 scope 限定在 /PIT/，不會控制同帳號其他 GitHub Pages 專案。
+- 保留原 OpenAI Sites 網址與 .openai/hosting.json，舊站仍可作為備援。
+- 更新 README、deployment_targets.md、task.md，說明線上網址、發布方式及多專案連接埠。
+
+## 相容性與效能
+
+- GitHub Pages 版本完全由靜態檔案提供，不需要長期執行 Node／Vinext 伺服器，因此不受 Codex 或學校帳號生命週期影響。
+- 本機開發仍使用原本 Vinext 流程；只有 Pages 專用建置會加入 /PIT/ 路徑。
+- 遊戲物理、AI、PIT 判定、相機、HUD、模型與資料結構未改動，因此本次不宣稱遊戲 FPS 提升。
+- 建置仍會提示主要 3D chunk 大於 500 kB；它不影響本次正確性，之後可另案處理載入效能。
+
+## 驗證結果
+
+- 公開內容安全掃描：未發現 GitHub token、私鑰、API key 或其他憑證。
+- npm run lint：通過。
+- npm test：正式建置成功，24／24 項測試通過。
+- npm run build:pages：成功輸出純靜態首頁，驗證 index.html、PWA 檔案、favicon、Open Graph 圖片及四個 GLB。
+- 本機 /PIT/ 預覽：首頁、manifest、service worker、favicon、所有 JS／CSS、四個 GLB、Rapier 與 colormap 均回傳 200。
+- 本機無頭 Edge：成功進入 3D 遊戲；視角由「後方追蹤」切至「駕駛視角」；按住 Q 正常顯示無線電圓盤；未捕捉到執行期例外或載入失敗。
+- GitHub Actions：https://github.com/ianhung221/PIT/actions/runs/34612913017 已成功完成 build 與 deploy。
+- 正式網址 HTTP：首頁、manifest、service worker、favicon 與警車 GLB 均回傳 200。
+- 正式網址無頭 Edge：成功進入遊戲、切換視角並開啟無線電圓盤。
+- 本機驗證伺服器已關閉。
+
+## 工具狀態與已知事項
+
+- Codex 內建瀏覽器仍因 Windows sandbox helper 初始化錯誤無法啟動；依恢復流程重設後結果相同。
+- 本次改用 Microsoft Edge headless 與 DevTools Protocol 完成正式網站互動驗證，因此不是只做 HTTP 檢查。
+- Vinext 在 Windows 完成 Pages 預渲染後偶爾於關閉程序時觸發 libuv assertion；建置腳本會先清空舊 dist，且只在 Windows 允許進入嚴格的全新產物驗證。GitHub Linux workflow 仍要求建置正常成功，不會忽略錯誤。

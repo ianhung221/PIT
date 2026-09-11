@@ -77,6 +77,6 @@
 - [x] 新增靜態輸出驗證腳本與 GitHub Actions workflow
 - [x] 執行 lint、正式測試及 GitHub Pages 靜態建置
 - [x] 以 /PIT/ 子路徑啟動本地伺服器並完成無頭 Edge 互動驗證
-- [/] 建立 ianhung221/PIT 公開儲存庫並推送完整 Git 歷史
-- [ ] 啟用並驗證 GitHub Pages 正式網站
-- [ ] 更新部署紀錄、README 與 walkthrough.md
+- [x] 建立 ianhung221/PIT 公開儲存庫並推送完整 Git 歷史
+- [x] 啟用並驗證 GitHub Pages 正式網站
+- [x] 更新部署紀錄、README 與 walkthrough.md
