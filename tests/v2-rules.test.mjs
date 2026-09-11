@@ -5,6 +5,9 @@ import { applyImpactDamage, pristineDamage, vehicleCanContinue, vehicleDriveabil
 import { coordinatePursuit } from "../lib/pursuitCoordinator.ts";
 import { generateRoad } from "../lib/proceduralMap.ts";
 import { assessPitImpact } from "../lib/pitSimulation.ts";
+import { VEHICLE_VISUALS } from "../lib/gameConfig.ts";
+import { computeHelicopterFrame } from "../lib/cameraMath.ts";
+import { existsSync } from "node:fs";
 
 test("authorizes a low-risk PIT and holds an unsafe one", () => {
   const safe = evaluatePitRisk({ speedKph: 52, weatherGrip: 1, visibility: 1, roadRisk: .1, trafficDensity: 0, obstacleRisk: 0, offenseSeverity: .8, supportUnits: 2 });
@@ -73,4 +76,33 @@ test("generated roads cross all three biomes without disconnected metadata", () 
     const centerDistance = Math.hypot(segment.x - previous.x, segment.z - previous.z);
     return centerDistance > 68 && centerDistance < 76;
   }));
+});
+
+test("defines a visual adapter for every vehicle without changing the physics forward axis", () => {
+  assert.deepEqual(Object.keys(VEHICLE_VISUALS).sort(), ["interceptor", "patrol", "suspect", "suv"]);
+  for (const visual of Object.values(VEHICLE_VISUALS)) {
+    assert.equal(visual.rotationY, Math.PI);
+    assert.equal(visual.scale.length, 3);
+    assert.ok(visual.scale.every((value) => Number.isFinite(value) && value > 0));
+  }
+});
+
+test("ships the CC0 colormap referenced by every Kenney GLB", () => {
+  assert.equal(existsSync("public/assets/kenney-car-kit/Textures/colormap.png"), true);
+});
+
+test("keeps the player in the helicopter frame when the suspect is far away", () => {
+  const player = { x: 0, z: 0, yaw: 0, speed: 20, lateralSpeed: 0 };
+  const suspect = { x: 0, z: -250, yaw: 0, speed: 25, lateralSpeed: 0 };
+  const frame = computeHelicopterFrame(player, suspect, [], 90, 70);
+  assert.ok(Math.hypot(frame.centerX - player.x, frame.centerZ - player.z) <= 30);
+  assert.ok(frame.separation <= 120);
+});
+
+test("centers both pursuit vehicles at normal helicopter range", () => {
+  const player = { x: 0, z: 0, yaw: 0, speed: 20, lateralSpeed: 0 };
+  const suspect = { x: 0, z: -70, yaw: 0, speed: 25, lateralSpeed: 0 };
+  const frame = computeHelicopterFrame(player, suspect, [], 90, 70);
+  assert.equal(frame.centerZ, -35);
+  assert.equal(frame.separation, 70);
 });

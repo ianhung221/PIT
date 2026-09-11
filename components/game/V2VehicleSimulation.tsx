@@ -19,6 +19,7 @@ import {
   SUSPECT,
   VEHICLES,
   WEATHER,
+  type CameraMode,
   type MissionConfig,
 } from "@/lib/gameConfig";
 import {
@@ -71,6 +72,7 @@ interface FinishData {
 
 interface SimulationProps {
   config: MissionConfig;
+  cameraMode: CameraMode;
   runtime: MutableRefObject<V2Runtime>;
   keys: MutableRefObject<Set<string>>;
   onUpdate: (data: V2HudData) => void;
@@ -95,7 +97,7 @@ function driveBodyToward(body: RapierRigidBody, targetX: number, targetZ: number
   body.applyImpulse({ x: frame.rightX * lateral, y: 0, z: frame.rightZ * lateral }, true);
 }
 
-export function V2VehicleSimulation({ config, runtime, keys, onUpdate, onFinish }: SimulationProps) {
+export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdate, onFinish }: SimulationProps) {
   const playerRef = useRef<RapierRigidBody>(null);
   const suspectRef = useRef<RapierRigidBody>(null);
   const support2Ref = useRef<RapierRigidBody>(null);
@@ -480,7 +482,7 @@ export function V2VehicleSimulation({ config, runtime, keys, onUpdate, onFinish 
       onCollisionEnter={handleVehicleCollision}
     >
       <CuboidCollider args={[playerSpec.width / 2, .48, playerSpec.length / 2]} mass={playerSpec.mass} friction={.68 * WEATHER[config.weather].grip} restitution={.08} contactSkin={.025} />
-      <VehicleModel police model={config.vehicle} unit="01" />
+      <VehicleModel police model={config.vehicle} unit="01" hideExterior={cameraMode === "driver"} />
     </RigidBody>
     <RigidBody
       ref={suspectRef}

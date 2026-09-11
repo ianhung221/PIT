@@ -26,7 +26,7 @@ export function CockpitView({ runtime, mode, steering }: {
       wheel.current.rotation.z = ((left ? 1 : 0) - (right ? 1 : 0)) * .55;
     }
   });
-  return <group ref={group} visible={false}>
+  return <group ref={group} visible={false} name="cockpit-view">
     <mesh position={[0, .38, -.78]} castShadow><boxGeometry args={[1.7, .26, .5]} /><meshStandardMaterial color="#11181c" roughness={.75} /></mesh>
     <mesh position={[0, .67, -.93]} rotation={[-.18, 0, 0]}><boxGeometry args={[1.65, .08, .12]} /><meshStandardMaterial color="#202a2e" /></mesh>
     <mesh position={[-.78, .82, -.52]} rotation={[0, 0, -.14]}><boxGeometry args={[.1, .95, .12]} /><meshStandardMaterial color="#151c20" /></mesh>

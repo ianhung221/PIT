@@ -28,6 +28,17 @@ export const VEHICLES = {
 
 export const SUSPECT = { mass: 1, width: 2, height: .62, length: 4.4, color: "#8d261b" } as const;
 
+export const VEHICLE_VISUALS = {
+  patrol: { scale: [1.35, 1, 1.52] as [number, number, number], rotationY: Math.PI, positionY: -.18 },
+  interceptor: { scale: [1.62, 1.2, 1.76] as [number, number, number], rotationY: Math.PI, positionY: -.18 },
+  suv: { scale: [1.43, 1.12, 1.8] as [number, number, number], rotationY: Math.PI, positionY: -.18 },
+  suspect: { scale: [1.5, 1.08, 1.72] as [number, number, number], rotationY: Math.PI, positionY: -.18 },
+} as const satisfies Record<VehicleId | "suspect", {
+  scale: [number, number, number];
+  rotationY: number;
+  positionY: number;
+}>;
+
 export const PIT_RULES = {
   rearZoneStart: .28,
   sideZoneStart: .52,
@@ -55,7 +66,9 @@ export const CAMERA_SETTINGS = {
   mirrorFrameSkip: 2,
   mirrorFar: 95,
   helicopterMinHeight: 14,
-  helicopterMaxHeight: 32,
+  helicopterMaxHeight: 96,
+  helicopterFocusDistance: 90,
+  helicopterSupportRadius: 70,
 } as const;
 
 export const QUALITY_SETTINGS = {

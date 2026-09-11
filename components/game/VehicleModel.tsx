@@ -2,8 +2,9 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber uses Three.js JSX properties. */
 
 import { Clone, useGLTF } from "@react-three/drei";
-import { Component, type ReactNode } from "react";
-import { SUSPECT, VEHICLES, type VehicleId } from "@/lib/gameConfig";
+import { Component, useMemo, type ReactNode } from "react";
+import * as THREE from "three";
+import { SUSPECT, VEHICLES, VEHICLE_VISUALS, type VehicleId } from "@/lib/gameConfig";
 
 const ASSETS = {
   patrol: "/assets/kenney-car-kit/police.glb",
@@ -12,22 +13,30 @@ const ASSETS = {
   suspect: "/assets/kenney-car-kit/sedan-sports.glb",
 } as const;
 
-const SCALE: Record<VehicleId | "suspect", [number, number, number]> = {
-  patrol: [1.35, 1, 1.52],
-  interceptor: [1.62, 1.2, 1.76],
-  suv: [1.43, 1.12, 1.8],
-  suspect: [1.5, 1.08, 1.72],
-};
-
 class VehicleAssetBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
-function LoadedVehicle({ asset, scale }: { asset: string; scale: [number, number, number] }) {
+function LoadedVehicle({ asset, kind }: { asset: string; kind: VehicleId | "suspect" }) {
   const { scene } = useGLTF(asset);
-  return <group position={[0, -.18, 0]} scale={scale}><Clone object={scene} castShadow receiveShadow /></group>;
+  const clone = useMemo(() => {
+    const instance = scene.clone(true);
+    instance.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.material = Array.isArray(child.material)
+        ? child.material.map((material) => material.clone())
+        : child.material.clone();
+    });
+    return instance;
+  }, [scene]);
+  const visual = VEHICLE_VISUALS[kind];
+  return <group position={[0, visual.positionY, 0]} rotation={[0, visual.rotationY, 0]} scale={visual.scale}>
+    <Clone object={clone} />
+  </group>;
 }
 
 function FallbackVehicle({ police, model }: { police: boolean; model: VehicleId }) {
@@ -38,11 +47,16 @@ function FallbackVehicle({ police, model }: { police: boolean; model: VehicleId 
   </group>;
 }
 
-export function VehicleModel({ police = false, model = "patrol", unit = "" }: { police?: boolean; model?: VehicleId; unit?: string }) {
+export function VehicleModel({ police = false, model = "patrol", unit = "", hideExterior = false }: {
+  police?: boolean;
+  model?: VehicleId;
+  unit?: string;
+  hideExterior?: boolean;
+}) {
   const kind = police ? model : "suspect";
   const shape = police ? VEHICLES[model] : SUSPECT;
-  return <group>
-    <VehicleAssetBoundary fallback={<FallbackVehicle police={police} model={model} />}><LoadedVehicle asset={ASSETS[kind]} scale={SCALE[kind]} /></VehicleAssetBoundary>
+  return <group visible={!hideExterior} name={unit === "01" ? "player-exterior" : undefined}>
+    <VehicleAssetBoundary fallback={<FallbackVehicle police={police} model={model} />}><LoadedVehicle asset={ASSETS[kind]} kind={kind} /></VehicleAssetBoundary>
     {police && <>
       <pointLight position={[-.36, shape.height / 2 + .73, .08]} color="#ff251c" intensity={3.2} distance={10} />
       <pointLight position={[.36, shape.height / 2 + .73, .08]} color="#198dff" intensity={3.2} distance={10} />

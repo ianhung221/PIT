@@ -76,7 +76,7 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, roadIndex, onUp
     <directionalLight castShadow position={[15, 28, 10]} intensity={config.time === "night" ? .42 : 2.1} color={config.time === "night" ? "#85a7d9" : "#fff1cc"} />
     <Physics gravity={[0, 0, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
       <ProceduralWorld road={runtime.current.road} config={config} activeIndex={roadIndex} />
-      <V2VehicleSimulation config={config} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
+      <V2VehicleSimulation config={config} cameraMode={cameraMode} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <V2Weather config={config} runtime={runtime} />
     <CockpitView runtime={runtime} mode={cameraMode} steering={keys} />
