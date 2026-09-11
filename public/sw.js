@@ -1,5 +1,7 @@
-const CACHE = "pit-unit-v1";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg"];
+const CACHE = "pit-unit-v2";
+const SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, "");
+const scopedPath = (path) => `${SCOPE_PATH}${path.startsWith("/") ? path : `/${path}`}` || "/";
+const APP_SHELL = [scopedPath("/"), scopedPath("/manifest.webmanifest"), scopedPath("/favicon.svg")];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
@@ -19,5 +21,5 @@ self.addEventListener("fetch", (event) => {
       caches.open(CACHE).then((cache) => cache.put(event.request, copy));
     }
     return response;
-  }).catch(() => caches.match(event.request).then((cached) => cached || caches.match("/"))));
+  }).catch(() => caches.match(event.request).then((cached) => cached || caches.match(scopedPath("/")))));
 });

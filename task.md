@@ -68,3 +68,15 @@
 - [ ] 使用 Codex 瀏覽器完成實際碰撞操作驗證
 - [x] 重新發布正式網站
 - [x] 更新 walkthrough.md
+
+## GitHub Pages 永久發布遷移
+
+- [x] 記錄遷移前 Git 狀態並檢查公開內容安全性
+- [x] 建立 GitHub Pages 靜態輸出與 base path 設定
+- [x] 修正 metadata、車模與 PWA 的子路徑相容性
+- [x] 新增靜態輸出驗證腳本與 GitHub Actions workflow
+- [x] 執行 lint、正式測試及 GitHub Pages 靜態建置
+- [x] 以 /PIT/ 子路徑啟動本地伺服器並完成無頭 Edge 互動驗證
+- [/] 建立 ianhung221/PIT 公開儲存庫並推送完整 Git 歷史
+- [ ] 啟用並驗證 GitHub Pages 正式網站
+- [ ] 更新部署紀錄、README 與 walkthrough.md

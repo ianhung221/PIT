@@ -5,12 +5,13 @@ import { Clone, useGLTF } from "@react-three/drei";
 import { Component, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import { SUSPECT, VEHICLES, VEHICLE_VISUALS, type VehicleId } from "@/lib/gameConfig";
+import { publicPath } from "@/lib/publicPath";
 
 const ASSETS = {
-  patrol: "/assets/kenney-car-kit/police.glb",
-  interceptor: "/assets/kenney-car-kit/race.glb",
-  suv: "/assets/kenney-car-kit/suv.glb",
-  suspect: "/assets/kenney-car-kit/sedan-sports.glb",
+  patrol: publicPath("/assets/kenney-car-kit/police.glb"),
+  interceptor: publicPath("/assets/kenney-car-kit/race.glb"),
+  suv: publicPath("/assets/kenney-car-kit/suv.glb"),
+  suspect: publicPath("/assets/kenney-car-kit/sedan-sports.glb"),
 } as const;
 
 class VehicleAssetBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {

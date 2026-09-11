@@ -185,3 +185,292 @@
 
 第一輪若獲核准，只執行 Batch 1、2；Batch 3–6 必須另行核准。
 
+---
+
+# （已取消）學校帳號 Sites 遷移 — Implementation Plan
+
+> 狀態：此方案不執行。因學校帳號日後也會被刪除，現改採下方的 GitHub Pages 遷移方案；本段僅保留作為決策紀錄。
+
+## 1. Goal Description
+
+讓目前登入的學校 Codex 帳號可以持續編輯、建立版本與發布 PIT Unit，同時：
+
+- 完整保留目前本機程式碼、Git 歷史、遊戲資料結構與既有功能。
+- 不刪除、覆蓋或停用私人帳號擁有的舊 Site。
+- 以相同程式碼在學校帳號下建立新的 Sites 專案，因此會取得新網址。
+- 新站驗證成功前，舊站繼續正常運作，作為可回復版本。
+- 後續已核准的程式修改在本機驗證完成後，可直接發布到學校帳號的新 Site；修改程式前仍必須先取得玩家核准。
+
+### Research Findings
+
+- 本機工作目錄乾淨，最新 Git 提交包含 V2 第一輪修正及 Sites version 5 發布紀錄。
+- 現有 .openai/hosting.json 指向私人帳號的 Site：appgprj_6a85b0a3b18081918944d43f2248899b。
+- 學校帳號的 Sites 擁有／可編輯清單皆為空，且查詢上述專案得到 project_not_found；因此學校帳號無法更新原 Site。
+- 本機專案不綁 ChatGPT 帳號，學校帳號仍可編輯、測試和提交同一份程式碼。
+- 現有 Vinext 建置與 Sites 輸出格式已曾成功發布，不需要為帳號遷移改寫遊戲或更換框架。
+- PROJECT_SOUL.md 不存在，沒有可辨識的作品定位衝突。
+
+## 2. Open Questions / User Review Required
+
+### 已採用的建議預設
+
+1. 新 Site 名稱仍使用「PIT Unit」。
+2. 新網址的 slug 優先嘗試 pit-unit-pursuit；若已被舊站占用，使用平台提供的最接近可用名稱，不為取得相同網址刪除舊站。
+3. 新站完成驗證後，以「任何取得網址的人都能遊玩」為目標發布，延續目前的使用方式。
+4. 若學校管理員禁止公開 Sites，立即停止公開發布，不擅自改成只限全校或邀請其他人；保留已建立的私人新站並回報，再另行規劃 GitHub Pages 等免費替代方案。
+5. 舊 Site 的專案 ID、正式網址與最後版本會先寫入永久遷移紀錄，才更換本機 manifest。
+
+### 需要玩家核准的影響
+
+- 新 Site 必然使用新網址；舊網址仍由私人帳號管理，無法轉移給學校帳號。
+- .openai/hosting.json 的 project_id 會在新 Site 建立成功後改成學校帳號的新專案 ID。這只改變後續發布目標，不會改變遊戲內容。
+- 執行階段會建立新網站並正式發布，屬外部狀態變更；必須收到本計畫的明確核准才執行。
+
+目前沒有其他設計問題需要決定。如不同意上述公開範圍或命名方式，請在核准前指定。
+
+## 3. Proposed Changes
+
+### deployment_targets.md（新增）
+
+- 建立永久部署目標紀錄，不覆蓋舊資料。
+- 記錄私人帳號舊 Site 的名稱、專案 ID、網址、最後已知版本與狀態。
+- 新 Site 建立後追加學校帳號的新專案 ID、網址、建立日期與目前主要發布目標。
+- 不記錄登入資訊、權杖或其他秘密。
+
+### .openai/hosting.json
+
+- 新 Site 尚未成功建立前不修改。
+- 建立成功並取得確切新 project_id 後，只替換 project_id。
+- 保留現有 d1: null、r2: null 與其他合法設定，不加入帳號資料或憑證。
+- 不再指向私人帳號舊 Site；需要回查時以 deployment_targets.md 的紀錄為準。
+
+### task.md
+
+- 新增「學校帳號 Sites 遷移」工作清單。
+- 逐項記錄舊站備份、新站建立、manifest 更新、建置、版本儲存、公開發布、正式網址驗證及文件更新。
+
+### walkthrough.md
+
+- 追加遷移紀錄，不覆蓋先前版本內容。
+- 說明舊站仍保留、新站網址、存取範圍、驗證結果，以及後續發布改由學校帳號管理。
+
+### Sites 平台操作
+
+1. 再次確認學校帳號下沒有尚未完成或重複的 PIT Unit Site。
+2. 使用學校帳號建立一次新的 Sites 專案；不得重複建立。
+3. 立即把平台回傳的新 project_id 寫入 .openai/hosting.json，並核對無衝突。
+4. 以目前 Git HEAD 建置與封裝相同程式碼。
+5. 將確切來源提交推送到新 Site 的來源倉庫。
+6. 儲存新版本並依學校帳號允許的權限發布。
+7. 新站成功前不變更或刪除舊站。
+
+### 遊戲程式與資料
+
+- 不修改 components/、lib/、tests/、遊戲資產、規則、物理或 UI。
+- 不新增資料庫或雲端儲存。
+- 不變更舊 Site 的存取權限、slug、版本或內容。
+
+## 4. Verification Plan
+
+### 遷移前
+
+1. 確認 Git 工作目錄乾淨，記錄目前完整 HEAD。
+2. 執行 npm test，確認正式建置及既有 24 項測試仍通過。
+3. 確認舊網址仍能正常回應，但不使用學校帳號修改它。
+
+### 新 Site 建立與發布
+
+1. 確認新 Site 回傳的 project_id 與舊 ID 不同。
+2. 重新讀取 .openai/hosting.json，確認只切換發布目標。
+3. 確認新 Site 中的來源 commit 與本機完整 HEAD 一致。
+4. 檢查封裝檔含 dist/server/index.js、dist/client/ 與 dist/.openai/hosting.json。
+5. 等待部署狀態為 succeeded；失敗時保留已儲存版本，不重複建立網站。
+
+### 正式網址驗證
+
+1. 新網址回傳成功，不是錯誤頁或登入循環。
+2. 首頁能選擇場景、時段、天候、警車與畫質。
+3. 能進入遊戲，車模材質與方向正確。
+4. 方向鍵、C 視角切換、R 快速後看及 Q 無線電仍能運作。
+5. 確認新站的實際分享範圍；若學校政策不允許公開，停止並回報。
+6. 驗證後關閉本機伺服器，更新 walkthrough.md。
+
+## Approval Gate
+
+目前只完成研究與更新 implementation_plan.md，尚未建立新 Site，也未修改發布目標。
+
+收到玩家明確回覆「同意執行學校帳號 Sites 遷移」前：
+
+- 不建立或更新 task.md、deployment_targets.md、walkthrough.md。
+- 不修改 .openai/hosting.json。
+- 不建立、發布或調整任何 Site。
+- 不修改遊戲程式、測試、資產或資料結構。
+
+---
+
+# GitHub Pages 永久發布遷移 — Implementation Plan
+
+## 1. Goal Description
+
+將 PIT Unit 從綁定特定 Codex／Sites 帳號的發布方式，遷移到玩家長期持有的個人 GitHub 帳號與 GitHub Pages：
+
+- 保留本機程式碼、Git 歷史、遊戲功能、測試與資料結構。
+- 使用獨立的「專案網站」儲存庫與網址，不和玩家另一個專案互相覆蓋。
+- 維持 Vinext 本機開發流程，另外加入適合 GitHub Pages 子路徑的靜態輸出。
+- 保留現有 Sites 網站作為舊版備援，不刪除、不覆蓋。
+- 後續核准的版本可經 GitHub Actions 自動測試、建置及發布。
+
+### Research Findings
+
+- 本機分支為 main，已有完整提交歷史，但目前沒有 Git remote。
+- .openai/hosting.json 仍指向私人帳號的舊 Sites 專案；GitHub Pages 不使用它，因此不需刪除或改寫。
+- Vinext 1.0.0-beta.2 支援 output: export、basePath 與 assetPrefix，靜態輸出為 dist/client。
+- 遊戲頁面可做客戶端靜態發布；但 app/layout.tsx 使用 next/headers 動態產生 metadata，會阻擋純靜態匯出。
+- 車模、PWA、manifest、service worker、favicon 與 Open Graph 圖片目前含根目錄絕對路徑。GitHub Pages 專案網站位於「/儲存庫名稱/」子路徑，直接發布會造成資源 404。
+- public 已包含所需 GLB 與靜態資產，不需重新下載美術資源。
+- 本機未安裝 gh CLI；建立遠端儲存庫時，需透過瀏覽器、GitHub 連接器或玩家手動操作授權。
+- GitHub Pages 專案網址為 https://帳號.github.io/儲存庫名稱/。不同儲存庫使用不同子路徑，另一個專案不會與 PIT Unit 衝突。
+- 本機同時執行兩個專案時，只有強制使用相同連接埠才會衝突；第二個專案可使用 3001 等其他可用連接埠。
+- GitHub Free 的 Pages 零預算方案原則上需使用公開儲存庫；私人儲存庫 Pages 取決於付費方案。
+- PROJECT_SOUL.md 不存在，沒有可辨識的作品定位衝突。
+
+官方參考：
+
+- GitHub Pages：https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages
+- 自訂 Actions：https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
+- 發布來源：https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site
+
+## 2. Open Questions / User Review Required
+
+### 必須由玩家確認
+
+1. **是否接受原始碼公開？**
+   建議接受，建立公開儲存庫，以符合零預算 GitHub Pages 方案。執行前會再掃描秘密資料。若不接受，需改用付費私人 Pages 或另選可連接私人儲存庫的免費代管服務。
+2. **長期個人 GitHub 帳號名稱。**
+   不能使用日後會被刪除的學校帳號；執行時若未登入指定帳號，會停在授權步驟。
+3. **儲存庫名稱。**
+   建議使用 PIT；若該名稱已存在則使用 pit-unit。最終網址與 base path 都會包含確定後的名稱。
+
+### 已採用的建議預設
+
+- 使用 GitHub「專案網站」，不占用唯一的 帳號.github.io 使用者網站。
+- 保留現有 Sites 網站在線作為備援。
+- GitHub Pages 成功上線後，將其記錄為主要公開網址。
+- 本機不鎖死連接埠；3000 被占用時使用 3001 或自動選擇的可用連接埠。
+- 不改遊戲玩法、物理、AI、視角、畫面或資料結構。
+
+## 3. Proposed Changes
+
+### next.config.ts（新增）
+
+- 只在 GitHub Pages 建置環境啟用 output: export。
+- 依核准後的儲存庫名稱設定 basePath、assetPrefix 與靜態網站尾斜線；本機開發維持空路徑。
+- 不移除 Vinext 或現有 Sites 建置能力。
+
+### app/layout.tsx
+
+- 移除靜態匯出不支援的 next/headers 動態依賴。
+- 使用建置時環境資訊產生 metadata、manifest、favicon 與 Open Graph 路徑。
+- 保留目前標題、描述、PWA 與分享資訊。
+
+### lib/publicPath.ts（新增）
+
+- 集中產生可感知 base path 的公開資源路徑。
+- 本機與 Sites 維持根路徑；GitHub Pages 自動加入儲存庫子路徑。
+
+### components/game/VehicleModel.tsx
+
+- 四個 GLB 路徑改用共用公開路徑函式。
+- 不改模型、材質、碰撞盒、性能或 fallback。
+
+### components/PwaRegister.tsx、public/manifest.webmanifest、public/sw.js
+
+- 以正確專案子路徑註冊 service worker。
+- manifest 的 start_url、scope、圖示改成可由專案子路徑解析。
+- service worker 由自身 scope 建立快取網址，離線 fallback 回專案首頁。
+- 更新快取版本，避免舊根路徑快取污染新站。
+
+### package.json、scripts/verify-static-export.mjs
+
+- 新增 GitHub Pages 專用建置與輸出驗證指令。
+- 驗證 dist/client 的首頁、manifest、service worker、favicon 與必要 GLB 完整存在。
+- 掃描關鍵資源，避免仍錯指向 GitHub 帳號根目錄。
+- 保留既有 dev、build、test、lint 指令。
+
+### .github/workflows/deploy-pages.yml（新增）
+
+- 使用 GitHub 官方 Pages Actions；推送 main 後自動安裝、測試、靜態建置、上傳 dist/client 並部署。
+- 只授予部署所需最小權限，不儲存密碼或個人權杖。
+- 將實際儲存庫名稱與正式網址以環境變數傳給建置。
+- 匯出內容包含 .nojekyll。
+
+### deployment_targets.md（新增）
+
+- 永久追加舊 Sites 與 GitHub Pages 的專案 ID／網址、日期及主要／備援狀態。
+- 不保存登入資料或權杖。
+
+### README.md
+
+- 加入 Pages 網址、Actions 發布流程與多專案連接埠說明。
+- 保留舊 Sites 網址並標為備援。
+
+### task.md、walkthrough.md
+
+- 收到執行核准後才建立／更新 task.md。
+- 完成後在 walkthrough.md 追加正式網址、自動化與驗證結果，不覆蓋舊紀錄。
+
+### GitHub 外部操作
+
+1. 確認登入的是指定的長期個人 GitHub 帳號。
+2. 掃描秘密與大型檔案；若有不應公開內容，停止並回報。
+3. 檢查同名儲存庫；不得覆蓋其他專案。
+4. 建立一次新的公開儲存庫，設定 origin，推送完整 Git 歷史。
+5. 將 Pages Source 設為 GitHub Actions，等待首次部署後驗證正式網址。
+
+### 明確不修改
+
+- 不修改遊戲規則、物理、AI、視角、車模內容或使用者資料。
+- 不刪除舊 Sites 專案或 .openai/hosting.json。
+- 不更動玩家另一個 GitHub 專案、儲存庫、remote 或 Pages 網址。
+- 不建立 GitHub 帳號、不保存密碼、不將專案放進學校管理帳號。
+
+## 4. Verification Plan
+
+### 本機及靜態建置
+
+1. 記錄 Git HEAD、工作目錄與 remote 狀態。
+2. 掃描公開內容，確認無憑證、權杖、個資或不應發布的大型暫存檔。
+3. 執行 npm run lint。
+4. 執行 npm test；既有正式建置與 24 項測試全部通過。
+5. 執行 Pages 靜態建置與輸出驗證。
+6. 以正式相同的「/儲存庫名稱/」子路徑啟動本機靜態伺服器。
+7. 使用瀏覽器檢查首頁、遊戲、GLB、manifest、service worker、favicon、console 與 network，確認沒有 404 或執行期錯誤。
+8. 關閉本機伺服器。
+
+### 防回歸實玩
+
+- 首頁選項與進入遊戲正常。
+- 方向鍵、C、R、Q、暫停及重新挑戰正常。
+- 四種車模、材質、方向與碰撞不回歸。
+- PIT、後援 AI 與 HUD 不因路徑調整而變化。
+- 直接重新整理專案首頁仍可啟動。
+- PWA 與 service worker scope 只涵蓋 PIT Unit，不影響同帳號其他 Pages 專案。
+
+### GitHub 及正式網址
+
+1. origin 只指向新 PIT Unit 儲存庫。
+2. 另一個專案的儲存庫、workflow 與 Pages 網址完全不變。
+3. GitHub Actions 測試、建置、artifact 與 deploy job 全部成功。
+4. 使用正式網址再做一次瀏覽器與 network 驗證。
+5. 更新 walkthrough.md 與 deployment_targets.md，記錄結果及可回復位置。
+
+## Approval Gate
+
+目前只完成研究與 GitHub Pages 遷移規劃。這次同意更新計畫不等於同意修改程式或建立公開儲存庫。
+
+在玩家明確回答三個未決事項並核准執行前：
+
+- 不建立／更新 task.md。
+- 不修改程式、設定、測試、資產、README 或 walkthrough。
+- 不建立 GitHub 儲存庫、不設定 remote、不推送、不啟用 Pages。
+- 不發布或刪除任何網站。
