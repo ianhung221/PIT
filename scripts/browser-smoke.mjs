@@ -22,7 +22,9 @@ async function findPage() {
       const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
       const page = pages.find((item) => item.type === "page" && item.url.startsWith(url));
       if (page) return page;
-    } catch {}
+    } catch {
+      // Edge may need a moment to expose its DevTools endpoint.
+    }
     await delay(250);
   }
   throw new Error("Could not connect to the headless Edge page.");
