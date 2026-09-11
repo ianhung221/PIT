@@ -40,6 +40,7 @@
 - [x] 執行 lint、build 與自動化測試
 - [x] 啟動本地伺服器並完成瀏覽器互動驗證
 - [x] 關閉本地伺服器並更新 walkthrough.md
+- [x] 發布 Sites 正式版本 5
 
 ## PIT Unit V2 — Training Simulator Expansion
 
