@@ -100,9 +100,9 @@ try {
   const game = await evaluate(`({
     canvas: Boolean(document.querySelector("canvas")),
     camera: document.querySelector(".hud-camera strong")?.textContent ?? "",
-    text: document.body.innerText
+    logo: document.querySelector(".game-logo")?.textContent ?? ""
   })`);
-  if (!game.canvas || !game.text.includes("PIT UNIT V2")) {
+  if (!game.canvas || !game.logo.includes("PIT") || !game.camera) {
     throw new Error(`Game canvas or HUD did not load: ${JSON.stringify({ game, runtimeErrors, failedRequests })}`);
   }
   console.log("browser: game loaded");
