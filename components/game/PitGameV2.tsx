@@ -12,7 +12,7 @@ import { V2VehicleSimulation, type V2HudData } from "@/components/game/V2Vehicle
 import { V2Weather } from "@/components/game/V2Weather";
 import { VehicleMirrors } from "@/components/game/VehicleMirrors";
 import { logRuntimeEvent, makeV2Runtime, type V2Result, type V2Runtime } from "@/components/game/v2Runtime";
-import { CAMERA_LABELS, QUALITY_SETTINGS, SCENES, VEHICLES, WEATHER, type CameraMode, type MissionConfig } from "@/lib/gameConfig";
+import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEATHER, type CameraMode, type MissionConfig } from "@/lib/gameConfig";
 import { evaluatePitRisk } from "@/lib/pitPolicy";
 import { coordinatePursuit } from "@/lib/pursuitCoordinator";
 import { vehicleDriveability } from "@/lib/vehicleDamage";
@@ -79,9 +79,9 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, roadIndex, onUp
       <V2VehicleSimulation config={config} cameraMode={cameraMode} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <V2Weather config={config} runtime={runtime} />
-    <CockpitView runtime={runtime} mode={cameraMode} steering={keys} />
-    <VehicleMirrors runtime={runtime} mode={cameraMode} quality={config.quality} />
     <CameraRig runtime={runtime} mode={cameraMode} keys={keys} />
+    <CockpitView mode={cameraMode} steering={keys} />
+    <VehicleMirrors runtime={runtime} mode={cameraMode} quality={config.quality} />
   </>;
 }
 
@@ -94,6 +94,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   const [hud, setHud] = useState<V2HudData>(() => ({
     speed: 0,
     distance: 32,
+    targetBearing: 0,
     pit: 0,
     suspectDriveability: 1,
     playerDriveability: 1,
@@ -175,6 +176,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     setHud({
       speed: 0,
       distance: 32,
+      targetBearing: 0,
       pit: 0,
       suspectDriveability: 1,
       playerDriveability: 1,
@@ -251,6 +253,11 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       <i>嫌犯可駕駛度 {Math.round(hud.suspectDriveability * 100)}%</i>
     </section>
     <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>
+    {cameraMode === "auto" && hud.distance > CAMERA_SETTINGS.helicopterFocusDistance && <div
+      className="target-direction"
+      style={{ "--target-bearing": `${hud.targetBearing}rad` } as React.CSSProperties}
+      aria-label="嫌犯位於直升機畫面外"
+    ><i>↑</i><span>嫌犯在畫面外</span></div>}
     <div className="map-code">MAP {mapCode}</div>
     <div className="game-controls"><kbd>↑</kbd> 加速 · <kbd>↓</kbd> 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · <kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電 · <kbd>P</kbd> 暫停</div>
     <RadioCommandWheel disabled={result !== "playing"} onCommand={handleRadio} />

@@ -66,7 +66,7 @@ export const CAMERA_SETTINGS = {
   mirrorFrameSkip: 2,
   mirrorFar: 95,
   helicopterMinHeight: 14,
-  helicopterMaxHeight: 96,
+  helicopterMaxHeight: 72,
   helicopterFocusDistance: 90,
   helicopterSupportRadius: 70,
 } as const;

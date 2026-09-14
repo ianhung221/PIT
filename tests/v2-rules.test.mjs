@@ -106,3 +106,13 @@ test("centers both pursuit vehicles at normal helicopter range", () => {
   assert.equal(frame.centerZ, -35);
   assert.equal(frame.separation, 70);
 });
+
+test("blends helicopter framing continuously around the focus distance", () => {
+  const player = { x: 0, z: 0, yaw: 0, speed: 20, lateralSpeed: 0 };
+  const justInside = { x: 0, z: -89.9, yaw: 0, speed: 25, lateralSpeed: 0 };
+  const justOutside = { x: 0, z: -90.1, yaw: 0, speed: 25, lateralSpeed: 0 };
+  const before = computeHelicopterFrame(player, justInside, [], 90, 70);
+  const after = computeHelicopterFrame(player, justOutside, [], 90, 70);
+  assert.ok(Math.abs(before.centerZ - after.centerZ) < 1);
+  assert.ok(Math.abs(before.separation - after.separation) < 1);
+});

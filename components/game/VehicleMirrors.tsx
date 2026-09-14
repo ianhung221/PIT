@@ -75,7 +75,7 @@ export function VehicleMirrors({ runtime, mode, quality = "high" }: {
     gl.setRenderTarget(previousTarget);
     if (cockpit) cockpit.visible = cockpitVisible;
     group.current.visible = true;
-  }, -1);
+  });
 
   return <group ref={group} visible={false}>
     <mesh position={[0, .25, 0]} renderOrder={1000}><planeGeometry args={[.62, .16]} /><meshBasicMaterial map={targets[0].texture} toneMapped={false} depthTest={false} depthWrite={false} /></mesh>

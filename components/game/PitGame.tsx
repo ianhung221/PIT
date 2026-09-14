@@ -482,9 +482,9 @@ function ChaseScene({ config, runtime, keys, cameraMode, onUpdate, onFinish }: {
       <VehicleSimulation config={config} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <Weather config={config} runtime={runtime} />
-    <CockpitView runtime={runtime} mode={cameraMode} steering={keys} />
-    <VehicleMirrors runtime={runtime} mode={cameraMode} />
     <CameraRig runtime={runtime} mode={cameraMode} keys={keys} />
+    <CockpitView mode={cameraMode} steering={keys} />
+    <VehicleMirrors runtime={runtime} mode={cameraMode} />
   </>;
 }
 

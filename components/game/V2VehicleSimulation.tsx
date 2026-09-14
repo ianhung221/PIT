@@ -55,6 +55,7 @@ type BodyFrame = {
 export interface V2HudData {
   speed: number;
   distance: number;
+  targetBearing: number;
   pit: number;
   suspectDriveability: number;
   playerDriveability: number;
@@ -454,6 +455,10 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       onUpdate({
         speed: Math.max(0, finalPlayerFrame.forwardSpeed),
         distance: Math.hypot(suspectPosition.x - playerPosition.x, suspectPosition.z - playerPosition.z),
+        targetBearing: Math.atan2(
+          (suspectPosition.x - playerPosition.x) * finalPlayerFrame.rightX + (suspectPosition.z - playerPosition.z) * finalPlayerFrame.rightZ,
+          (suspectPosition.x - playerPosition.x) * finalPlayerFrame.forwardX + (suspectPosition.z - playerPosition.z) * finalPlayerFrame.forwardZ,
+        ),
         pit: state.pit,
         suspectDriveability: vehicleDriveability(state.suspectDamage),
         playerDriveability,
