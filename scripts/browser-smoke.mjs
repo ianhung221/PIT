@@ -86,6 +86,16 @@ async function capture(name) {
   await writeFile(`work/browser-smoke/${prefix}${name}.png`, Buffer.from(result.data, "base64"));
 }
 
+async function waitFor(expression, description) {
+  for (let attempt = 0; attempt < 90; attempt++) {
+    if (await evaluate(expression)) return;
+    await delay(500);
+  }
+  await capture("failed-" + description);
+  const text = await evaluate("document.body.innerText");
+  throw new Error(`Timed out waiting for ${description}: ${text.slice(0, 1200)}`);
+}
+
 try {
   await Promise.all([command("Runtime.enable"), command("Page.enable"), command("Network.enable")]);
   await command("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
@@ -94,7 +104,8 @@ try {
     await command("Page.reload", { ignoreCache: true });
   }
   console.log("browser: protocols enabled");
-  await delay(5000);
+  await waitFor('Boolean(document.querySelector(".deploy-button"))', "briefing");
+  await delay(1000);
   const briefing = await evaluate(`({
     title: document.title,
     deploy: Boolean(document.querySelector(".deploy-button")),
@@ -120,7 +131,8 @@ try {
   await delay(300);
   await evaluate(`document.querySelector(".deploy-button").click()`);
   console.log("browser: mission started");
-  await delay(8000);
+  await waitFor('Boolean(document.querySelector("canvas") && document.querySelector(".hud-camera strong"))', "game");
+  await delay(5000);
   const game = await evaluate(`({
     canvas: Boolean(document.querySelector("canvas")),
     camera: document.querySelector(".hud-camera strong")?.textContent ?? "",
