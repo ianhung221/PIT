@@ -58,13 +58,12 @@ function useControls(onCamera: () => void, onPause: () => void) {
   return keys;
 }
 
-function ChaseScene({ config, runtime, keys, cameraMode, paused, roadIndex, onUpdate, onFinish }: {
+function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFinish }: {
   config: MissionConfig;
   runtime: React.MutableRefObject<V2Runtime>;
   keys: React.MutableRefObject<Set<string>>;
   cameraMode: CameraMode;
   paused: boolean;
-  roadIndex: number;
   onUpdate: (data: V2HudData) => void;
   onFinish: (data: { result: "success" | "failed"; outcome: MissionOutcome }) => void;
 }) {
@@ -75,7 +74,7 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, roadIndex, onUp
     <ambientLight intensity={config.time === "night" ? .3 : 1.2} />
     <directionalLight castShadow position={[15, 28, 10]} intensity={config.time === "night" ? .42 : 2.1} color={config.time === "night" ? "#85a7d9" : "#fff1cc"} />
     <Physics gravity={[0, 0, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
-      <ProceduralWorld road={runtime.current.road} config={config} activeIndex={roadIndex} />
+      <ProceduralWorld runtime={runtime} config={config} />
       <V2VehicleSimulation config={config} cameraMode={cameraMode} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <V2Weather config={config} runtime={runtime} />
@@ -210,7 +209,6 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         keys={keys}
         cameraMode={cameraMode}
         paused={result !== "playing"}
-        roadIndex={hud.roadIndex}
         onUpdate={(data) => {
           setHud(data);
           setPolicy({ authorization: data.authorization, reason: data.authorizationReason });

@@ -16,8 +16,9 @@ export interface VehicleDamage {
 export interface RoadSegment {
   id: string; index: number; biome: SceneId; x: number; z: number; yaw: number;
   length: number; width: number; turn: number; risk: number;
+  startWidth?: number; endWidth?: number;
   kind: "straight" | "curve" | "junction" | "transition";
 }
 
-export interface GeneratedRoad { seed: string; code: string; segments: RoadSegment[] }
+export interface GeneratedRoad { seed: string; code: string; segments: RoadSegment[]; geometryVersion?: number }
 export interface V2MissionConfig extends MissionConfig { seed?: string; camera?: CameraMode }

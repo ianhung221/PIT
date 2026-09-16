@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
+const worldCheck = process.env.PIT_TEST_WORLD === "true";
+const weather = process.env.PIT_TEST_WEATHER ?? "rain";
+const scene = process.env.PIT_TEST_SCENE ?? "highway";
+const quality = process.env.PIT_TEST_QUALITY ?? "high";
 const edge = process.env.EDGE_PATH
   ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -78,11 +82,17 @@ async function evaluate(expression) {
 async function capture(name) {
   const result = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await mkdir("work/browser-smoke", { recursive: true });
-  await writeFile(`work/browser-smoke/${name}.png`, Buffer.from(result.data, "base64"));
+  const prefix = worldCheck ? `${scene}-${weather}-${quality}-` : "";
+  await writeFile(`work/browser-smoke/${prefix}${name}.png`, Buffer.from(result.data, "base64"));
 }
 
 try {
   await Promise.all([command("Runtime.enable"), command("Page.enable"), command("Network.enable")]);
+  await command("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  if (worldCheck) {
+    await command("Page.addScriptToEvaluateOnNewDocument", { source: `window.__pitRoots = new Set(); window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = { supportsFiber: true, inject: () => 1, onCommitFiberRoot: (_, root) => window.__pitRoots.add(root), onCommitFiberUnmount: () => {} };` });
+    await command("Page.reload", { ignoreCache: true });
+  }
   console.log("browser: protocols enabled");
   await delay(5000);
   const briefing = await evaluate(`({
@@ -94,6 +104,20 @@ try {
     throw new Error(`Mission briefing did not hydrate: ${JSON.stringify(briefing)}`);
   }
 
+  if (worldCheck) await evaluate(`(() => {
+    const sceneLabels = { city: "城市街區", country: "鄉間公路", highway: "州際高速" };
+    [...document.querySelectorAll("button")].find(b => b.textContent.includes(sceneLabels[${JSON.stringify(scene)}])).click();
+    [...document.querySelectorAll("button")].find(b => b.textContent === "白天").click();
+    const q = { low: "低", medium: "中", high: "高" };
+    [...document.querySelectorAll(".quality-field button")].find(b => b.textContent === q[${JSON.stringify(quality)}]).click();
+    const select = document.querySelector('select[aria-label="選擇天候"]');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, ${JSON.stringify(weather)});
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const input = document.querySelector('.seed-field input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "BATCH3-${scene}");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await delay(300);
   await evaluate(`document.querySelector(".deploy-button").click()`);
   console.log("browser: mission started");
   await delay(8000);
@@ -106,6 +130,25 @@ try {
     throw new Error(`Game canvas or HUD did not load: ${JSON.stringify({ game, runtimeErrors, failedRequests })}`);
   }
   console.log("browser: game loaded");
+  if (worldCheck) {
+    await evaluate(`window.__pitInspect = () => {
+      const result = { runtime: null, world: null, particles: null, bodies: [] };
+      const visited = new Set();
+      function walk(f) {
+        if (!f || visited.has(f)) return;
+        visited.add(f);
+        if (f.memoizedProps?.runtime?.current?.road) result.runtime = f.memoizedProps.runtime.current;
+        const object = f.stateNode?.object;
+        if (object?.name === "procedural-world") result.world = object;
+        if (object?.name === "weather-particles") result.particles = object;
+        if (f.ref?.current?.setTranslation && !result.bodies.includes(f.ref.current)) result.bodies.push(f.ref.current);
+        walk(f.child); walk(f.sibling);
+      }
+      for (const root of window.__pitRoots) walk(root.current);
+      return result;
+    }`);
+    console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
+  }
 
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "c", code: "KeyC" });
   await command("Input.dispatchKeyEvent", { type: "keyUp", key: "c", code: "KeyC" });
@@ -138,6 +181,72 @@ try {
   if (!helicopter.targetDirection) throw new Error("The off-screen suspect direction indicator did not appear at long range.");
   await capture("helicopter-long-range");
   console.log("browser: helicopter screenshot captured");
+  if (worldCheck) {
+    for (let i = 0; i < (process.env.PIT_TEST_LONG === "false" ? 0 : 5); i++) {
+      await delay(8000);
+      console.log("world: long run", await evaluate(`(() => { const s = window.__pitInspect(); const r = s.runtime; const heights = s.particles ? Array.from(s.particles.geometry.attributes.position.array).filter((_, i) => i % 3 === 1) : []; return { elapsed: r?.elapsed, cars: r ? [r.playerRoadIndex, r.suspectRoadIndex, ...r.supportRoadIndices] : [], loaded: s.world?.children.map(o => Number(o.name.replace("road-segment-", ""))), heightBands: new Set(heights.map(Math.floor)).size }; })()`));
+    }
+    const check = await evaluate(`(() => { const s = window.__pitInspect(); const r = s.runtime; if (!r || !s.world) return { ok: false }; const loaded = new Set(s.world.children.map(o => Number(o.name.replace("road-segment-", "")))); const cars = [r.playerRoadIndex, r.suspectRoadIndex, ...r.supportRoadIndices]; const heights = s.particles ? Array.from(s.particles.geometry.attributes.position.array).filter((_, i) => i % 3 === 1) : []; return { ok: cars.every(i => loaded.has(i)) && loaded.size <= 60, heightBands: new Set(heights.map(Math.floor)).size, elapsed: r.elapsed }; })()`);
+    if (!check.ok || (weather !== "clear" && check.heightBands < 16)) throw new Error("World/weather long-run failed: " + JSON.stringify(check));
+    await capture("world-" + scene + "-" + weather + "-" + quality);
+    console.log("world: verified", JSON.stringify({ scene, weather, quality, ...check }));
+    // Controlled in-browser fixtures exercise both ends of both transitions without
+    // changing the shipped game, AI, or 90-second mission duration.
+    const transitions = await evaluate(`window.__pitInspect().runtime.road.segments.filter(s => s.kind === "transition").flatMap(s => [s.index, s.index + 1])`);
+    const key = async (value, type) => command("Input.dispatchKeyEvent", { type, key: value, code: value === "p" ? "KeyP" : value });
+    for (const index of transitions) {
+      await key("p", "keyDown"); await key("p", "keyUp");
+      await delay(150);
+      await evaluate(`(() => {
+        const s = window.__pitInspect(), r = s.runtime, seg = r.road.segments[${index}];
+        const cars = [r.player, r.suspect, ...r.supports];
+        const remaining = [...s.bodies];
+        const bodies = cars.map(car => { remaining.sort((a,b) => Math.hypot(a.translation().x-car.x,a.translation().z-car.z)-Math.hypot(b.translation().x-car.x,b.translation().z-car.z)); return remaining.shift(); });
+        const fx = -Math.sin(seg.yaw), fz = -Math.cos(seg.yaw);
+        for (let i=0;i<4;i++) {
+          const offset = [-12, 18, -26, -40][i];
+          const x = seg.x + fx * (-36 + offset), z = seg.z + fz * (-36 + offset);
+          bodies[i].setTranslation({x,y:.02,z},true);
+          bodies[i].setRotation({x:0,y:Math.sin(seg.yaw/2),z:0,w:Math.cos(seg.yaw/2)},true);
+          bodies[i].setLinvel({x:fx*30,y:0,z:fz*30},true);
+          bodies[i].setAngvel({x:0,y:0,z:0},true);
+          Object.assign(cars[i], {x,z,yaw:seg.yaw,speed:30,lateralSpeed:0});
+        }
+        r.playerRoadIndex = ${index}-1; r.suspectRoadIndex = ${index}; r.supportRoadIndices = [${index}-1,${index}-1]; r.elapsed=0;
+      })()`);
+      await delay(400);
+      await key("p", "keyDown"); await key("p", "keyUp");
+      await key("ArrowUp", "keyDown"); await delay(1600); await key("ArrowUp", "keyUp");
+      const crossing = await evaluate(`(() => { const s=window.__pitInspect(),r=s.runtime; return { index:r.playerRoadIndex,speed:r.player.speed,loaded:s.world.children.map(o=>o.name),elapsed:r.elapsed }; })()`);
+      if (crossing.index < index || crossing.speed < 10) throw new Error("Transition crossing failed: " + JSON.stringify({ index, crossing }));
+      await capture("transition-" + index);
+      console.log("world: transition crossed", JSON.stringify({ expected: index, actual: crossing.index, speed: crossing.speed }));
+    }
+    await key("c", "keyDown"); await key("c", "keyUp");
+    await key("c", "keyDown"); await key("c", "keyUp");
+    await key("p", "keyDown"); await key("p", "keyUp");
+    await delay(150);
+    await evaluate(`(() => {
+      const s=window.__pitInspect(),r=s.runtime,cars=[r.player,r.suspect,...r.supports],remaining=[...s.bodies];
+      const bodies=cars.map(car=>{ remaining.sort((a,b)=>Math.hypot(a.translation().x-car.x,a.translation().z-car.z)-Math.hypot(b.translation().x-car.x,b.translation().z-car.z)); return remaining.shift(); });
+      const indices=[2,20,10,11];
+      for(let i=0;i<4;i++) {
+        const seg=r.road.segments[indices[i]];
+        bodies[i].setTranslation({x:seg.x,y:.02,z:seg.z},true);
+        bodies[i].setRotation({x:0,y:Math.sin(seg.yaw/2),z:0,w:Math.cos(seg.yaw/2)},true);
+        bodies[i].setLinvel({x:0,y:0,z:0},true); bodies[i].setAngvel({x:0,y:0,z:0},true);
+        Object.assign(cars[i],{x:seg.x,z:seg.z,yaw:seg.yaw,speed:0,lateralSpeed:0});
+      }
+      r.playerRoadIndex=2;r.suspectRoadIndex=20;r.supportRoadIndices=[10,11];r.elapsed=0;
+    })()`);
+    await delay(400);
+    await key("p", "keyDown"); await key("p", "keyUp");
+    await key("ArrowDown", "keyDown"); await delay(3500); await key("ArrowDown", "keyUp");
+    const reverse = await evaluate(`window.__pitInspect().runtime.player.speed`);
+    if (reverse >= -1) throw new Error("Reverse did not engage: " + reverse);
+    await capture("driver-reversing");
+    console.log("world: reverse sampled", reverse);
+  }
 
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "q", code: "KeyQ" });
   await delay(300);

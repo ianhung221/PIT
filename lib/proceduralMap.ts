@@ -44,6 +44,8 @@ export function generateRoad(seed: string, start: SceneId, count = 72): Generate
       yaw: midYaw,
       length: length + 2,
       width: SCENES[biome].roadWidth,
+      startWidth: isTransition ? segments[index - 1].width : SCENES[biome].roadWidth,
+      endWidth: SCENES[biome].roadWidth,
       turn,
       risk: Math.min(1, choice.risk + Math.abs(turn) * 2),
       kind: isTransition ? "transition" : choice.kind,
@@ -53,7 +55,7 @@ export function generateRoad(seed: string, start: SceneId, count = 72): Generate
     yaw = nextYaw;
     previousTurn = turn;
   }
-  return { seed, code: `${start.toUpperCase()}-${seed}`, segments };
+  return { seed, code: `${start.toUpperCase()}-${seed}`, segments, geometryVersion: 2 };
 }
 
 export function closestRoadSegment(road: GeneratedRoad, x: number, z: number, hint = 0): number {

@@ -440,6 +440,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const finalSupport2Frame = bodyFrame(support2);
     const finalSupport3Frame = bodyFrame(support3);
     state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
+    state.supportRoadIndices[0] = closestRoadSegment(state.road, support2Position.x, support2Position.z, state.supportRoadIndices[0]);
+    state.supportRoadIndices[1] = closestRoadSegment(state.road, support3Position.x, support3Position.z, state.supportRoadIndices[1]);
     state.player = { x: playerPosition.x, z: playerPosition.z, yaw: finalPlayerFrame.yaw, speed: finalPlayerFrame.forwardSpeed, lateralSpeed: finalPlayerFrame.lateralSpeed };
     state.suspect = { x: suspectPosition.x, z: suspectPosition.z, yaw: finalSuspectFrame.yaw, speed: finalSuspectFrame.forwardSpeed, lateralSpeed: finalSuspectFrame.lateralSpeed };
     state.supports[0] = { ...state.supports[0], x: support2Position.x, z: support2Position.z, yaw: finalSupport2Frame.yaw, speed: finalSupport2Frame.forwardSpeed, lateralSpeed: finalSupport2Frame.lateralSpeed };

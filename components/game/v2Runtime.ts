@@ -35,6 +35,7 @@ export interface V2Runtime {
   road: GeneratedRoad;
   playerRoadIndex: number;
   suspectRoadIndex: number;
+  supportRoadIndices: [number, number];
   elapsed: number;
   pit: number;
   collisionCooldown: number;
@@ -70,6 +71,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     road: generateRoad(seed, config.scene),
     playerRoadIndex: 0,
     suspectRoadIndex: 0,
+    supportRoadIndices: [0, 0],
     elapsed: 0,
     pit: 0,
     collisionCooldown: 0,
