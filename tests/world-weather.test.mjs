@@ -71,6 +71,42 @@ test("rain and snow stay dispersed through long runs and large frame deltas", ()
   }
 });
 
+function weatherDistribution(particles) {
+  const cells = new Map();
+  const diagonal = new Map();
+  for (let i = 0; i < particles.positions.length; i += 3) {
+    const x = Math.max(0, Math.min(11, Math.floor((particles.positions[i] + 30) / 5)));
+    const y = Math.max(0, Math.min(8, Math.floor(particles.positions[i + 1] / 2)));
+    cells.set(`${x},${y}`, (cells.get(`${x},${y}`) ?? 0) + 1);
+    diagonal.set(x - y, (diagonal.get(x - y) ?? 0) + 1);
+  }
+  return { occupied: cells.size, maxCell: Math.max(...cells.values()), maxDiagonal: Math.max(...diagonal.values()) };
+}
+
+test("seeded weather channels remain reproducible and spatially uncorrelated", () => {
+  const first = createWeatherParticles(680);
+  const replay = createWeatherParticles(680);
+  assert.deepEqual(first, replay);
+  assert.notDeepEqual(Array.from(first.positions.filter((_, i) => i % 3 === 0)), Array.from(first.speeds));
+  const initial = weatherDistribution(first);
+  assert.ok(initial.occupied >= 100, JSON.stringify(initial));
+  assert.ok(initial.maxCell <= 16, JSON.stringify(initial));
+});
+
+test("snow avoids diagonal bands through the final ten seconds and extended play", () => {
+  const particles = createWeatherParticles(680);
+  for (let frame = 0; frame < 60 * 180; frame++) {
+    const time = frame / 60;
+    advanceWeather(particles, "snow", 1 / 60, Math.sin(time * .37) * .012, -.18);
+    if (frame === 60 * 80 || frame === 60 * 90 - 1 || frame === 60 * 180 - 1) {
+      const distribution = weatherDistribution(particles);
+      assert.ok(distribution.occupied >= 95, JSON.stringify({ time, distribution }));
+      assert.ok(distribution.maxCell <= 18, JSON.stringify({ time, distribution }));
+      assert.ok(distribution.maxDiagonal <= 120, JSON.stringify({ time, distribution }));
+    }
+  }
+});
+
 test("precipitation compensates actual world travel including reverse and sideways motion", () => {
   const forward = createWeatherParticles(1);
   const reverse = createWeatherParticles(1);

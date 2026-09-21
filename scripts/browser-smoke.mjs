@@ -144,7 +144,7 @@ try {
   console.log("browser: game loaded");
   if (worldCheck) {
     await evaluate(`window.__pitInspect = () => {
-      const result = { runtime: null, world: null, particles: null, bodies: [] };
+      const result = { runtime: null, world: null, particles: null, mirrors: null, bodies: [] };
       const visited = new Set();
       function walk(f) {
         if (!f || visited.has(f)) return;
@@ -153,13 +153,14 @@ try {
         const object = f.stateNode?.object;
         if (object?.name === "procedural-world") result.world = object;
         if (object?.name === "weather-particles") result.particles = object;
+        if (object?.name === "vehicle-mirrors") result.mirrors = object;
         if (f.ref?.current?.setTranslation && !result.bodies.includes(f.ref.current)) result.bodies.push(f.ref.current);
         walk(f.child); walk(f.sibling);
       }
       for (const root of window.__pitRoots) walk(root.current);
       return result;
     }`);
-    console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
+    console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "c", code: "KeyC" });
@@ -202,6 +203,32 @@ try {
     if (!check.ok || (weather !== "clear" && check.heightBands < 16)) throw new Error("World/weather long-run failed: " + JSON.stringify(check));
     await capture("world-" + scene + "-" + weather + "-" + quality);
     console.log("world: verified", JSON.stringify({ scene, weather, quality, ...check }));
+    if (weather !== "clear" && process.env.PIT_TEST_WEATHER_END === "true") {
+      while (await evaluate(`window.__pitInspect().runtime.elapsed < 80`)) {
+        await delay(5000);
+        const elapsed = await evaluate(`window.__pitInspect().runtime.elapsed`);
+        if (elapsed >= 89) throw new Error("Mission ended before final-ten weather capture.");
+      }
+      // Helicopter -> chase -> driver, then allow all mirror targets to refresh.
+      await command("Input.dispatchKeyEvent", { type: "keyDown", key: "c", code: "KeyC" });
+      await command("Input.dispatchKeyEvent", { type: "keyUp", key: "c", code: "KeyC" });
+      await command("Input.dispatchKeyEvent", { type: "keyDown", key: "c", code: "KeyC" });
+      await command("Input.dispatchKeyEvent", { type: "keyUp", key: "c", code: "KeyC" });
+      await delay(1200);
+      const weatherEnd = await evaluate(`(() => {
+        const s = window.__pitInspect(), material = s.particles?.material;
+        const positions = s.particles?.geometry.attributes.position.array ?? [];
+        const cells = new Set();
+        for (let i=0;i<positions.length;i+=3) cells.add(Math.floor((positions[i]+30)/5)+","+Math.floor(positions[i+1]/2));
+        return { elapsed:s.runtime.elapsed, camera:document.querySelector(".hud-camera strong")?.textContent, cells:cells.size, soft:Boolean(material?.alphaMap), mainSize:material?.size, mirrorSize:s.mirrors?.userData.lastWeatherSize, mainOpacity:material?.opacity, mirrorOpacity:s.mirrors?.userData.lastWeatherOpacity };
+      })()`);
+      if (!weatherEnd.camera.includes("駕駛") || !weatherEnd.soft || weatherEnd.cells < 90 || !(weatherEnd.mirrorSize < weatherEnd.mainSize * .3) || !(weatherEnd.mirrorOpacity < weatherEnd.mainOpacity)) throw new Error("Final-ten weather or mirror material failed: " + JSON.stringify(weatherEnd));
+      await capture("weather-final-ten-driver");
+      console.log("weather: final ten verified", JSON.stringify(weatherEnd));
+    }
+    if (process.env.PIT_TEST_WEATHER_ONLY === "true") {
+      console.log("weather: weather-only fixture complete");
+    } else {
     // Controlled in-browser fixtures exercise both ends of both transitions without
     // changing the shipped game, AI, or 90-second mission duration.
     const transitions = await evaluate(`window.__pitInspect().runtime.road.segments.filter(s => s.kind === "transition").flatMap(s => [s.index, s.index + 1])`);
@@ -258,6 +285,7 @@ try {
     if (reverse >= -1) throw new Error("Reverse did not engage: " + reverse);
     await capture("driver-reversing");
     console.log("world: reverse sampled", reverse);
+    }
   }
 
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "q", code: "KeyQ" });

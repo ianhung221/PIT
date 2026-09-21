@@ -26,7 +26,7 @@ export function VehicleMirrors({ runtime, mode, quality = "high" }: {
     target.texture.wrapS = THREE.RepeatWrapping;
     target.texture.repeat.x = -1;
     target.texture.offset.x = 1;
-    return new THREE.PerspectiveCamera(58, target.width / target.height, .1, CAMERA_SETTINGS.mirrorFar);
+    return new THREE.PerspectiveCamera(58, target.width / target.height, .45, CAMERA_SETTINGS.mirrorFar);
   }), [targets]);
   const look = useMemo(() => new THREE.Vector3(), []);
 
@@ -53,31 +53,48 @@ export function VehicleMirrors({ runtime, mode, quality = "high" }: {
     ];
     const cockpit = scene.getObjectByName("cockpit-view");
     const cockpitVisible = cockpit?.visible ?? false;
+    const weather = scene.getObjectByName("weather-particles") as THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | undefined;
+    const weatherMaterial = weather?.material instanceof THREE.PointsMaterial ? weather.material : undefined;
+    const weatherSize = weatherMaterial?.size;
+    const weatherOpacity = weatherMaterial?.opacity;
     if (cockpit) cockpit.visible = false;
     const previousTarget = gl.getRenderTarget();
-    mirrorCameras.forEach((mirrorCamera, index) => {
-      const offset = cameraOffsets[index];
-      const angle = car.yaw + viewAngles[index];
-      mirrorCamera.position.set(
-        car.x + rightX * offset.side + forwardX * offset.forward,
-        offset.height,
-        car.z + rightZ * offset.side + forwardZ * offset.forward,
-      );
-      look.set(
-        mirrorCamera.position.x + Math.sin(angle) * 28,
-        .65,
-        mirrorCamera.position.z + Math.cos(angle) * 28,
-      );
-      mirrorCamera.lookAt(look);
-      gl.setRenderTarget(targets[index]);
-      gl.render(scene, mirrorCamera);
-    });
-    gl.setRenderTarget(previousTarget);
-    if (cockpit) cockpit.visible = cockpitVisible;
-    group.current.visible = true;
+    if (weatherMaterial) {
+      weatherMaterial.size *= Number(weather?.userData.mirrorSizeScale ?? .2);
+      weatherMaterial.opacity *= Number(weather?.userData.mirrorOpacityScale ?? .5);
+      group.current.userData.lastWeatherSize = weatherMaterial.size;
+      group.current.userData.lastWeatherOpacity = weatherMaterial.opacity;
+    }
+    try {
+      mirrorCameras.forEach((mirrorCamera, index) => {
+        const offset = cameraOffsets[index];
+        const angle = car.yaw + viewAngles[index];
+        mirrorCamera.position.set(
+          car.x + rightX * offset.side + forwardX * offset.forward,
+          offset.height,
+          car.z + rightZ * offset.side + forwardZ * offset.forward,
+        );
+        look.set(
+          mirrorCamera.position.x + Math.sin(angle) * 28,
+          .65,
+          mirrorCamera.position.z + Math.cos(angle) * 28,
+        );
+        mirrorCamera.lookAt(look);
+        gl.setRenderTarget(targets[index]);
+        gl.render(scene, mirrorCamera);
+      });
+    } finally {
+      gl.setRenderTarget(previousTarget);
+      if (weatherMaterial && weatherSize !== undefined && weatherOpacity !== undefined) {
+        weatherMaterial.size = weatherSize;
+        weatherMaterial.opacity = weatherOpacity;
+      }
+      if (cockpit) cockpit.visible = cockpitVisible;
+      group.current.visible = true;
+    }
   });
 
-  return <group ref={group} visible={false}>
+  return <group ref={group} visible={false} name="vehicle-mirrors">
     <mesh position={[0, .25, 0]} renderOrder={1000}><planeGeometry args={[.62, .16]} /><meshBasicMaterial map={targets[0].texture} toneMapped={false} depthTest={false} depthWrite={false} /></mesh>
     {qualitySettings.sideMirrors && <>
       <mesh position={[-.48, -.02, 0]} rotation={[0, .16, 0]} renderOrder={1000}><planeGeometry args={[.25, .15]} /><meshBasicMaterial map={targets[1].texture} toneMapped={false} depthTest={false} depthWrite={false} /></mesh>
