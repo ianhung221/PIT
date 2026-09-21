@@ -9,7 +9,7 @@
 - [x] 執行 lint、全部測試與 GitHub Pages 建置
 - [x] 實玩至倒數十秒並驗證三種畫質後視鏡
 - [x] 更新驗收紀錄與 Walkthrough
-- [ ] 發布 GitHub Pages、驗證正式網站並關閉伺服器
+- [x] 發布 GitHub Pages、驗證正式網站並關閉伺服器
 
 ## V2 第 3 批 — 道路與天候（2026-09-16 核准）
 

@@ -290,5 +290,6 @@
 ## 發布與玩家複驗
 
 - 正式網址：https://ianhung221.github.io/PIT/
-- 發布狀態：等待本次 GitHub Pages 工作流程完成後補記。
+- 發布狀態：程式提交 `0f46a1d` 已正式上線；[GitHub Actions 35609503790](https://github.com/ianhung221/PIT/actions/runs/35609503790) 的 Linux 測試、建置及部署全部成功。
+- 正式網址無頭 Edge：鄉間／降雪／高畫質成功載入新粒子遮罩與鏡面設定，進入遊戲後完成加速、駕駛／直升機視角切換及 Q 無線電；未回報執行期例外或資源載入失敗。
 - 請在 `v2_acceptance_test.md` 的 D 區測試 **V2-FIX-011**；原 V2-FIX-009 的玩家回報保留不改，補修結果用新列永久追蹤。
