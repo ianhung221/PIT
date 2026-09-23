@@ -324,4 +324,6 @@
 ## 發布與玩家複驗
 
 - 正式網址：https://ianhung221.github.io/PIT/
-- 發布工作與正式網址結果待補記。玩家請在 `v2_acceptance_test.md` 的 D 區複驗 V2-FIX-012～015。
+- 程式提交 `130c89e`；[GitHub Actions 發布工作](https://github.com/ianhung221/PIT/actions/runs/35870828309) 的 Linux 建置、測試及部署均通過。
+- 正式網址的無頭 Edge 雨天市區實玩通過：兩台後援完成撞牆恢復，與嫌犯距離約由 217／235 公尺縮至 37／60 公尺；Q1～Q6、Q4 低速封鎖、Q2／Q3／Q5 到位完成均通過，無瀏覽器錯誤。
+- 玩家請在 `v2_acceptance_test.md` 的 D 區複驗 V2-FIX-012～015；玩家狀態仍留白，不由自動測試代填。
