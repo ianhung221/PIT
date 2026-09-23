@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { verifySupportUnits } from "./browser-support.mjs";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
 const worldCheck = process.env.PIT_TEST_WORLD === "true";
@@ -163,6 +164,11 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
+  if (process.env.PIT_TEST_SUPPORT === "true") {
+    await verifySupportUnits({ evaluate, command, delay, capture, waitFor });
+    if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
+    console.log("support: all browser fixtures passed", url);
+  } else {
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "c", code: "KeyC" });
   await command("Input.dispatchKeyEvent", { type: "keyUp", key: "c", code: "KeyC" });
   await delay(500);
@@ -298,6 +304,7 @@ try {
     throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
   }
   console.log(JSON.stringify({ url, title: briefing.title, gameLoaded: true, cameraBefore: game.camera, cameraAfter: nextCamera, helicopter, radioOpen }));
+  }
 } finally {
   socket.close();
   browser.kill();

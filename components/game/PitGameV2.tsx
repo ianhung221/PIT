@@ -11,12 +11,12 @@ import { RadioCommandWheel } from "@/components/game/RadioCommandWheel";
 import { V2VehicleSimulation, type V2HudData } from "@/components/game/V2VehicleSimulation";
 import { V2Weather } from "@/components/game/V2Weather";
 import { VehicleMirrors } from "@/components/game/VehicleMirrors";
-import { logRuntimeEvent, makeV2Runtime, type V2Result, type V2Runtime } from "@/components/game/v2Runtime";
+import { logRuntimeEvent, makeV2Runtime, updateRadioFeedback, type V2Result, type V2Runtime } from "@/components/game/v2Runtime";
 import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEATHER, type CameraMode, type MissionConfig } from "@/lib/gameConfig";
 import { evaluatePitRisk } from "@/lib/pitPolicy";
-import { coordinatePursuit } from "@/lib/pursuitCoordinator";
+import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } from "@/lib/pursuitCoordinator";
 import { vehicleDriveability } from "@/lib/vehicleDamage";
-import type { MissionOutcome, RadioCommand } from "@/types/game";
+import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
 
 const CAMERA_ORDER: CameraMode[] = ["chase", "driver", "auto"];
 const OUTCOME_COPY: Record<MissionOutcome, { eyebrow: string; title: string; detail: string }> = {
@@ -91,6 +91,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   const [result, setResult] = useState<V2Result>("playing");
   const [outcome, setOutcome] = useState<MissionOutcome>("playing");
   const [hud, setHud] = useState<V2HudData>(() => ({
+    radioFeedback: null,
+    tacticalCommand: null,
     speed: 0,
     distance: 32,
     targetBearing: 0,
@@ -104,6 +106,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     assignments: coordinatePursuit({ pitQualified: false, suspectStopped: false, suspectDriveable: true, playerDriveability: 1 }),
   }));
   const [time, setTime] = useState(90);
+  const [radio, setRadio] = useState<RadioFeedback | null>(null);
   const [policy, setPolicy] = useState<{ authorization: V2Runtime["authorization"]; reason: string }>({ authorization: "unknown", reason: "按住 Q，選擇「請求 PIT 授權」" });
   const [debrief, setDebrief] = useState({ attempts: 0, successfulContacts: 0, unsafeContacts: 0, suspectDriveability: 1, events: [] as string[] });
   const cycleCamera = useCallback(() => setCameraMode((current) => CAMERA_ORDER[(CAMERA_ORDER.indexOf(current) + 1) % CAMERA_ORDER.length]), []);
@@ -123,7 +126,12 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
 
   const handleRadio = useCallback((command: RadioCommand) => {
     const state = runtime.current;
+    if (state.result !== "playing") return;
     state.command = command;
+    state.tacticalCommand = nextTacticalCommand(state.tacticalCommand, command);
+    if (command !== "request-pit") { state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; }
+    updateRadioFeedback(state, { command, phase: "received", message: `${COMMAND_LABELS[command]}・已接收` });
+    setRadio(state.radioFeedback);
     if (command === "request-pit") {
       const segment = state.road.segments[state.suspectRoadIndex];
       const trafficDensity = segment.biome === "city" ? .58 : segment.biome === "highway" ? .38 : .16;
@@ -142,12 +150,16 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       state.authorizationReason = decision.reasons.join("、");
       logRuntimeEvent(state, "指揮中心：" + decision.authorization.toUpperCase() + " — " + state.authorizationReason);
       setPolicy({ authorization: state.authorization, reason: state.authorizationReason });
+      updateRadioFeedback(state, { command, phase: "completed", message: `指揮中心已接收並完成評估：${state.authorization.toUpperCase()} — ${state.authorizationReason}` });
+      setRadio(state.radioFeedback);
     } else if (command === "terminate") {
       state.authorization = "terminate";
       state.authorizationReason = "玩家依公共安全風險主動終止追逐";
       state.result = "failed";
       state.outcome = "failed";
       logRuntimeEvent(state, "玩家下令終止追逐");
+      updateRadioFeedback(state, { command, phase: "completed", message: "終止追逐・已接收並執行，所有單位停止任務" });
+      setRadio(state.radioFeedback);
       setPolicy({ authorization: state.authorization, reason: state.authorizationReason });
       setDebrief({
         attempts: state.attempts,
@@ -173,6 +185,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     keys.current.clear();
     runtime.current = makeV2Runtime(config);
     setHud({
+      radioFeedback: null,
+      tacticalCommand: null,
       speed: 0,
       distance: 32,
       targetBearing: 0,
@@ -186,6 +200,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       assignments: coordinatePursuit({ pitQualified: false, suspectStopped: false, suspectDriveable: true, playerDriveability: 1 }),
     });
     setTime(90);
+    setRadio(null);
     setCameraMode("chase");
     setOutcome("playing");
     setResult("playing");
@@ -211,6 +226,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         paused={result !== "playing"}
         onUpdate={(data) => {
           setHud(data);
+          setRadio(data.radioFeedback);
           setPolicy({ authorization: data.authorization, reason: data.authorizationReason });
         }}
         onFinish={(data) => {
@@ -246,8 +262,9 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       <small>PIT AUTHORIZATION</small><strong>{authorization.toUpperCase()}</strong><span>{policy.reason}</span>
     </section>
     <section className="hud-units">
-      <small>UNIT COORDINATION</small><strong>01 {hud.assignments.player}</strong>
-      <span>02 {hud.assignments.unit2} · 03 {hud.assignments.unit3}</span>
+      <small>UNIT COORDINATION</small><strong>01 {ROLE_LABELS[hud.assignments.player]}</strong>
+      <span>02 {ROLE_LABELS[hud.assignments.unit2]} · 03 {ROLE_LABELS[hud.assignments.unit3]}</span>
+      <span>目前指令：{hud.tacticalCommand ? COMMAND_LABELS[hud.tacticalCommand] : "正常追蹤"}</span>
       <i>嫌犯可駕駛度 {Math.round(hud.suspectDriveability * 100)}%</i>
     </section>
     <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>
@@ -259,6 +276,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <div className="map-code">MAP {mapCode}</div>
     <div className="game-controls"><kbd>↑</kbd> 加速 · <kbd>↓</kbd> 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · <kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電 · <kbd>P</kbd> 暫停</div>
     <RadioCommandWheel disabled={result !== "playing"} onCommand={handleRadio} />
+    <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && (result !== "playing" || 90 - time - radio.at < 8) ? radio.message : ""}</div>
     {result !== "playing" && <div className="result-overlay"><div className={"result-card result-card--" + result}>
       <span>{resultCopy.eyebrow}</span><h2>{resultCopy.title}</h2><p>{resultCopy.detail}</p>
       {result !== "paused" && <div className="debrief-grid">

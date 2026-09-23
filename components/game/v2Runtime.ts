@@ -8,9 +8,11 @@ import type {
   PitAuthorization,
   PursuitRole,
   RadioCommand,
+  RadioFeedback,
   VehicleDamage,
 } from "@/types/game";
 import type { SuspectRecoveryMode } from "@/lib/gameRules";
+import { makeSupportAI, type SupportAIState } from "@/lib/supportUnitAI";
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -48,6 +50,11 @@ export interface V2Runtime {
   authorization: PitAuthorization;
   authorizationReason: string;
   command: RadioCommand | null;
+  tacticalCommand: RadioCommand | null;
+  commandAt: number;
+  radioFeedback: RadioFeedback | null;
+  supportAi: [SupportAIState, SupportAIState];
+  supportArrivedFor: [number, number];
   outcome: MissionOutcome;
   result: V2Result;
   attempts: number;
@@ -65,8 +72,8 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     player: snapshot(0, 8),
     suspect: snapshot(.8, -24, initialSpeed),
     supports: [
-      { ...snapshot(-2.1, 18), role: "secondary", model: "patrol" },
-      { ...snapshot(2.1, 29), role: "tertiary", model: "suv" },
+      { ...snapshot(-2.1, 18, Math.min(8, initialSpeed)), role: "secondary", model: "patrol" },
+      { ...snapshot(2.1, 29, Math.min(8, initialSpeed)), role: "tertiary", model: "suv" },
     ],
     road: generateRoad(seed, config.scene),
     playerRoadIndex: 0,
@@ -84,6 +91,11 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     authorization: "unknown",
     authorizationReason: "按住 Q，選擇「請求 PIT 授權」",
     command: null,
+    tacticalCommand: null,
+    commandAt: 0,
+    radioFeedback: null,
+    supportAi: [makeSupportAI(-2.1, 18), makeSupportAI(2.1, 29)],
+    supportArrivedFor: [0, 0],
     outcome: "playing",
     result: "playing",
     attempts: 0,
@@ -96,5 +108,11 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
 export function logRuntimeEvent(runtime: V2Runtime, message: string) {
   if (runtime.eventLog[0] === message) return;
   runtime.eventLog.unshift(message);
-  runtime.eventLog.splice(5);
+  runtime.eventLog.splice(60);
+}
+
+export function updateRadioFeedback(runtime: V2Runtime, feedback: Omit<RadioFeedback, "at">) {
+  if (runtime.radioFeedback?.command === feedback.command && runtime.radioFeedback.phase === feedback.phase && runtime.radioFeedback.message === feedback.message) return;
+  runtime.radioFeedback = { ...feedback, at: runtime.elapsed };
+  logRuntimeEvent(runtime, feedback.message);
 }

@@ -4,6 +4,8 @@ export type MissionOutcome = "playing" | "contained" | "disabled" | "stopped-mob
 export type PursuitRole = "primary" | "secondary" | "tertiary" | "containment-front" | "containment-rear";
 export type RadioCommand = "request-pit" | "prepare-pit" | "move-up" | "block-front" | "take-primary" | "terminate";
 export type PitAuthorization = "unknown" | "authorized" | "hold" | "denied" | "terminate";
+export type RadioPhase = "received" | "executing" | "completed" | "unable";
+export interface RadioFeedback { command: RadioCommand; phase: RadioPhase; message: string; at: number }
 
 export interface CarSnapshot { x: number; z: number; yaw: number; speed: number; lateralSpeed: number }
 

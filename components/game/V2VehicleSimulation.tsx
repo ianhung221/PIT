@@ -12,7 +12,7 @@ import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { VehicleModel } from "@/components/game/VehicleModel";
 import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
-import { logRuntimeEvent } from "@/components/game/v2Runtime";
+import { logRuntimeEvent, updateRadioFeedback } from "@/components/game/v2Runtime";
 import {
   PIT_RULES,
   SCENES,
@@ -35,9 +35,10 @@ import {
 } from "@/lib/gameRules";
 import { closestRoadSegment, roadTarget } from "@/lib/proceduralMap";
 import { assessPitImpact } from "@/lib/pitSimulation";
-import { coordinatePursuit, type PursuitAssignments } from "@/lib/pursuitCoordinator";
+import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
+import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
 import { applyImpactDamage, vehicleCanContinue, vehicleDriveability } from "@/lib/vehicleDamage";
-import type { MissionOutcome } from "@/types/game";
+import type { MissionOutcome, RadioFeedback, RadioCommand } from "@/types/game";
 import type { PitAuthorization } from "@/types/game";
 
 type BodyFrame = {
@@ -64,6 +65,8 @@ export interface V2HudData {
   authorization: PitAuthorization;
   authorizationReason: string;
   assignments: PursuitAssignments;
+  radioFeedback: RadioFeedback | null;
+  tacticalCommand: RadioCommand | null;
 }
 
 interface FinishData {
@@ -84,18 +87,18 @@ function desiredYawTo(fromX: number, fromZ: number, targetX: number, targetZ: nu
   return Math.atan2(-(targetX - fromX), -(targetZ - fromZ));
 }
 
-function driveBodyToward(body: RapierRigidBody, targetX: number, targetZ: number, targetSpeed: number, dt: number, grip: number, frame: BodyFrame) {
-  const position = body.translation();
-  const desiredYaw = desiredYawTo(position.x, position.z, targetX, targetZ);
-  const yawError = normalizeAngle(desiredYaw - frame.yaw);
+function driveSupport(body: RapierRigidBody, yawError: number, targetSpeed: number, maxSpeed: number, dt: number, grip: number, frame: BodyFrame) {
   const angularTarget = THREE.MathUtils.clamp(yawError * 2.3, -.68, .68);
   const angular = body.angvel();
   body.setAngvel({ x: 0, y: THREE.MathUtils.lerp(angular.y, angularTarget, Math.min(1, dt * 3.2 * grip)), z: 0 }, true);
-  const acceleration = THREE.MathUtils.clamp(targetSpeed - frame.forwardSpeed, -11, 5.8);
+  const acceleration = THREE.MathUtils.clamp((targetSpeed - frame.forwardSpeed) * 2 + Math.max(0, frame.forwardSpeed) * .1, -14 * grip, 9 * grip);
   const mass = body.mass();
   body.applyImpulse({ x: frame.forwardX * mass * acceleration * dt, y: 0, z: frame.forwardZ * mass * acceleration * dt }, true);
   const lateral = -frame.lateralSpeed * mass * Math.min(1, grip * 7 * dt);
   body.applyImpulse({ x: frame.rightX * lateral, y: 0, z: frame.rightZ * lateral }, true);
+  const velocity = body.linvel();
+  const speed = Math.hypot(velocity.x, velocity.z);
+  if (speed > maxSpeed) body.setLinvel({ x: velocity.x * maxSpeed / speed, y: velocity.y, z: velocity.z * maxSpeed / speed }, true);
 }
 
 export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdate, onFinish }: SimulationProps) {
@@ -386,9 +389,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
 
     const suspectSlow = Math.abs(suspectFrame.forwardSpeed) < 4.2;
     const assignments = coordinatePursuit({
-      command: state.command,
+      command: state.tacticalCommand,
       pitQualified: state.pitQualified,
-      suspectStopped: suspectSlow,
+      suspectStopped: state.tacticalCommand === "block-front" ? Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2 : suspectSlow,
       suspectDriveable: suspectCanDrive,
       playerDriveability,
     });
@@ -399,19 +402,25 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const frontZ = suspectPosition.z + suspectFrame.forwardZ * 6.2;
     const rearX = suspectPosition.x - suspectFrame.forwardX * 5.4;
     const rearZ = suspectPosition.z - suspectFrame.forwardZ * 5.4;
-    const support2Frame = bodyFrame(support2);
-    const support3Frame = bodyFrame(support3);
-    const containment = assignments.phase === "containment";
-    const support2Target = containment
-      ? { x: frontX + suspectFrame.rightX * 2.6, z: frontZ + suspectFrame.rightZ * 2.6, speed: suspectSlow ? 4 : baseCruise + 4 }
-      : assignments.unit2 === "primary"
-        ? { x: suspectPosition.x - suspectFrame.forwardX * 7, z: suspectPosition.z - suspectFrame.forwardZ * 7, speed: baseCruise + 2 }
-      : { x: playerPosition.x + playerFrame.rightX * 2.5 - playerFrame.forwardX * 8, z: playerPosition.z + playerFrame.rightZ * 2.5 - playerFrame.forwardZ * 8, speed: Math.max(9, playerFrame.forwardSpeed + 2) };
-    const support3Target = containment
-      ? { x: rearX - suspectFrame.rightX * 1.1, z: rearZ - suspectFrame.rightZ * 1.1, speed: suspectSlow ? 3 : baseCruise + 2 }
-      : { x: playerPosition.x - playerFrame.rightX * 2.2 - playerFrame.forwardX * 16, z: playerPosition.z - playerFrame.rightZ * 2.2 - playerFrame.forwardZ * 16, speed: Math.max(8, playerFrame.forwardSpeed + 1) };
-    driveBodyToward(support2, support2Target.x, support2Target.z, support2Target.speed, dt, grip, support2Frame);
-    driveBodyToward(support3, support3Target.x, support3Target.z, support3Target.speed, dt, grip, support3Frame);
+    state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
+    const currentPlayer = { ...state.player, x: playerPosition.x, z: playerPosition.z, yaw: playerFrame.yaw, speed: playerFrame.forwardSpeed };
+    const currentSuspect = { ...state.suspect, x: suspectPosition.x, z: suspectPosition.z, yaw: suspectFrame.yaw, speed: suspectFrame.forwardSpeed };
+    [support2, support3].forEach((body, unit) => {
+      const frame = bodyFrame(body), position = body.translation();
+      const index = closestRoadSegment(state.road, position.x, position.z, state.supportRoadIndices[unit]);
+      const car = { x: position.x, z: position.z, yaw: frame.yaw, speed: frame.forwardSpeed, lateralSpeed: frame.lateralSpeed };
+      const slot = supportSlot({ road: state.road, player: currentPlayer, suspect: currentSuspect, playerIndex: state.playerRoadIndex, suspectIndex: state.suspectRoadIndex, unit, role: unit === 0 ? assignments.unit2 : assignments.unit3, command: state.tacticalCommand });
+      const control = stepSupportAI(state.supportAi[unit], { car, road: state.road, index, slot, dt, grip, maxSpeed: unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, neighbors: [currentPlayer, currentSuspect, state.supports[1 - unit]] });
+      driveSupport(body, control.yawError, control.speed, unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, dt, grip, frame);
+      state.supportArrivedFor[unit] = control.arrived ? state.supportArrivedFor[unit] + dt : 0;
+      if (control.modeChanged) logRuntimeEvent(state, `0${unit + 2} 後援：${{ driving: "已脫困，重新加入追逐", braking: "受阻煞停", reversing: "倒車離障", realigning: "轉回道路" }[state.supportAi[unit].mode]}`);
+    });
+    if (state.tacticalCommand && state.tacticalCommand !== "terminate" && state.elapsed - state.commandAt > .7 && !(state.radioFeedback?.command === "request-pit" && state.elapsed - state.radioFeedback.at < 3)) {
+      const command = state.tacticalCommand;
+      const arrived = state.supportArrivedFor[0] > .6 && (command === "prepare-pit" || command === "block-front" ? state.supportArrivedFor[1] > .6 : true);
+      const feedback = tacticalFeedback(command, Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2, arrived, state.supportAi.some(ai => ai.mode !== "driving"));
+      updateRadioFeedback(state, { command, phase: feedback.phase, message: `${COMMAND_LABELS[command]}・${RADIO_PHASE_LABELS[feedback.phase]}：${feedback.message}` });
+    }
 
     const support2Position = support2.translation();
     const support3Position = support3.translation();
@@ -432,6 +441,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       state.authorization = "unknown";
       state.authorizationReason = "嫌犯重新逃逸，需重新評估 PIT 條件";
       state.command = null;
+      state.tacticalCommand = null;
+      state.radioFeedback = null;
       logRuntimeEvent(state, "包圍失敗：嫌犯仍可駕駛並再次逃逸");
     }
 
@@ -469,6 +480,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         authorization: state.authorization,
         authorizationReason: state.authorizationReason,
         assignments,
+        radioFeedback: state.radioFeedback,
+        tacticalCommand: state.tacticalCommand,
       });
     }
   });
@@ -512,6 +525,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       name="police-support-2"
       colliders={false}
       position={[-2.1, .02, 18]}
+      linearVelocity={[0, 0, -8]}
       enabledTranslations={[true, false, true]}
       enabledRotations={[false, true, false]}
       linearDamping={.09}
@@ -527,6 +541,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       name="police-support-3"
       colliders={false}
       position={[2.1, .02, 29]}
+      linearVelocity={[0, 0, -8]}
       enabledTranslations={[true, false, true]}
       enabledRotations={[false, true, false]}
       linearDamping={.1}

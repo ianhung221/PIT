@@ -17,16 +17,18 @@ export function RadioCommandWheel({ disabled, onCommand }: { disabled?: boolean;
   const [selected, setSelected] = useState(0);
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if (disabled) return;
+      if (disabled || event.repeat) return;
       if (event.key.toLowerCase() === "q") { event.preventDefault(); setOpen(true); }
-      if (event.key >= "1" && event.key <= "6") { setSelected(Number(event.key) - 1); if (open) onCommand(COMMANDS[Number(event.key) - 1].id); }
+      if (event.key >= "1" && event.key <= "6" && open) { event.preventDefault(); setSelected(Number(event.key) - 1); onCommand(COMMANDS[Number(event.key) - 1].id); setOpen(false); }
     };
     const up = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "q") setOpen(false);
     };
     window.addEventListener("keydown", down, { passive: false });
     window.addEventListener("keyup", up);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+    const close = () => setOpen(false);
+    window.addEventListener("blur", close);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", close); };
   }, [disabled, onCommand, open]);
   return <>
     <button className="radio-trigger" type="button" disabled={disabled} aria-expanded={open} onClick={() => setOpen((value) => !value)}><kbd>Q</kbd><span>無線電指令</span></button>
