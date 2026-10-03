@@ -276,7 +276,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <div className="map-code">MAP {mapCode}</div>
     <div className="game-controls"><kbd>↑</kbd> 加速 · <kbd>↓</kbd> 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · <kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電 · <kbd>P</kbd> 暫停</div>
     <RadioCommandWheel disabled={result !== "playing"} onCommand={handleRadio} />
-    <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && (result !== "playing" || 90 - time - radio.at < 8) ? radio.message : ""}</div>
+    {result === "playing" && <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && 90 - time - radio.at < 8 ? radio.message : ""}</div>}
     {result !== "playing" && <div className="result-overlay"><div className={"result-card result-card--" + result}>
       <span>{resultCopy.eyebrow}</span><h2>{resultCopy.title}</h2><p>{resultCopy.detail}</p>
       {result !== "paused" && <div className="debrief-grid">
@@ -284,7 +284,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         <span>未授權 <b>{debrief.unsafeContacts}</b></span><span>嫌犯車況 <b>{Math.round(debrief.suspectDriveability * 100)}%</b></span>
       </div>}
       {result !== "paused" && <ol className="debrief-log">{debrief.events.map((event, index) => <li key={event + "-" + index}>{event}</li>)}</ol>}
-      <div>
+      <div className="debrief-actions">
         {result === "paused" ? <button onClick={togglePause}>繼續任務</button> : <button onClick={restart}>相同地圖再試一次</button>}
         <button className="secondary" onClick={onExit}>返回設定</button>
       </div>

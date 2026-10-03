@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { verifySupportUnits } from "./browser-support.mjs";
+import { verifyDebrief } from "./browser-debrief.mjs";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
 const worldCheck = process.env.PIT_TEST_WORLD === "true";
@@ -164,7 +165,12 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (process.env.PIT_TEST_SUPPORT === "true") {
+  if (process.env.PIT_TEST_DEBRIEF === "true") {
+    if (!worldCheck) throw new Error("PIT_TEST_DEBRIEF requires PIT_TEST_WORLD=true");
+    await verifyDebrief({ evaluate, command, delay, capture });
+    if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
+    console.log("debrief: all browser fixtures passed", url);
+  } else if (process.env.PIT_TEST_SUPPORT === "true") {
     await verifySupportUnits({ evaluate, command, delay, capture, waitFor });
     if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
     console.log("support: all browser fixtures passed", url);
