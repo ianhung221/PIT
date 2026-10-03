@@ -342,4 +342,5 @@
 
 - `npm run lint`、`npm test`（39／39）及 `npm run build:pages` 通過；Windows 建置結束仍有既有 libuv 關閉警告，但新輸出驗證通過。
 - 本機無頭 Edge 以 60 筆紀錄測試 1280×800、375×667 及 320×420 視窗：桌面和手機的紀錄可獨立捲動，兩個按鈕可見；極低視窗捲動卡片後按鈕可操作。暫停繼續、手機重新挑戰、極低視窗返回設定均通過，無瀏覽器執行期錯誤或資源載入失敗。
-- 本機預覽伺服器已關閉；正式發布與正式網址複驗結果待補記。玩家請於 `v2_acceptance_test.md` 複驗 V2-FIX-016。
+- 本機預覽伺服器已關閉。程式提交 `2c23d77`；[GitHub Actions 發布工作](https://github.com/ianhung221/PIT/actions/runs/37102497124) 的 Linux 建置、測試與部署均通過。
+- 正式網址 `https://ianhung221.github.io/PIT/` 的無頭 Edge 重跑相同結算情境通過：60 筆紀錄可捲、提示不遮擋，暫停繼續、手機重新挑戰及極低視窗返回設定可操作，無瀏覽器錯誤。玩家請於 `v2_acceptance_test.md` 複驗 V2-FIX-016。
