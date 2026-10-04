@@ -368,4 +368,7 @@
 
 - 沒有新增模型、攝影機或每幀 React 更新；通道選擇只在嘗試進場時運算，失敗後有重試間隔。未做 FPS 基準測量，不宣稱具體幀率提升。
 - 額外型別檢查修正共用控制器對不同 Rapier 版本的型別耦合，只要求實際使用的方法，執行邏輯不變；五項新增測試重跑通過。`tsc --noEmit --allowImportingTsExtensions` 仍有既存 CameraRig／Cloudflare 型別錯誤，本批檔案已無報錯；未宣稱全專案型別檢查通過。
-- 鄉間晴天 Q1～Q6 與重新挑戰通過：重開回到 playing、戰術命令清空、佈位回 waiting 且沒有殘留目標。本機伺服器已關閉。正式發布紀錄待以下追加；玩家複驗項目為 `v2_acceptance_test.md` 的 V2-FIX-017～019。
+- 鄉間晴天 Q1～Q6 與重新挑戰通過：重開回到 playing、戰術命令清空、佈位回 waiting 且沒有殘留目標。本機伺服器已關閉。
+- 程式提交 `36f90e9`，型別相容補充 `e78358f`；[GitHub Actions](https://github.com/ianhung221/PIT/actions/runs/37208459050) 的 Linux 建置、lint、44 項測試及 Pages 部署均成功。
+- 正式網址 https://ianhung221.github.io/PIT/ 已完成無頭 Edge 複驗：Q4 預先待命、低速前後守位（約 +5.03／-4.87 公尺）、Q1 保留命令、嫌犯再加速後保持待命、Q2／Q3／Q5 到位及 Q6 終止均通過；重新挑戰清除戰術與目標，無執行期或資源載入錯誤。
+- 請玩家在 `v2_acceptance_test.md` 的 V2-FIX-017～019 填寫結果。C-005 勝利門檻與嚴格守位不一致仍留第 5 批，須另行規劃及核准。
