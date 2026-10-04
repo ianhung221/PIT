@@ -16,6 +16,7 @@ import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEA
 import { evaluatePitRisk } from "@/lib/pitPolicy";
 import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } from "@/lib/pursuitCoordinator";
 import { vehicleDriveability } from "@/lib/vehicleDamage";
+import { makeBlockade } from "@/lib/supportContainment";
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
 
 const CAMERA_ORDER: CameraMode[] = ["chase", "driver", "auto"];
@@ -129,7 +130,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     if (state.result !== "playing") return;
     state.command = command;
     state.tacticalCommand = nextTacticalCommand(state.tacticalCommand, command);
-    if (command !== "request-pit") { state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; }
+    if (command !== "request-pit") { state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; state.blockade = makeBlockade(); }
     updateRadioFeedback(state, { command, phase: "received", message: `${COMMAND_LABELS[command]}・已接收` });
     setRadio(state.radioFeedback);
     if (command === "request-pit") {
@@ -174,8 +175,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       const labels: Record<Exclude<RadioCommand, "request-pit" | "terminate">, string> = {
         "prepare-pit": "後援保持距離，準備 PIT",
         "move-up": "第二單位正在靠近",
-        "block-front": "後援準備封鎖嫌犯車頭",
-        "take-primary": "第二單位接替主追位置",
+        "block-front": "後援封鎖已待命，嫌犯減速後自動進場",
+        "take-primary": "02 接替領追，PIT 仍由玩家執行",
       };
       logRuntimeEvent(state, labels[command]);
     }
@@ -265,6 +266,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       <small>UNIT COORDINATION</small><strong>01 {ROLE_LABELS[hud.assignments.player]}</strong>
       <span>02 {ROLE_LABELS[hud.assignments.unit2]} · 03 {ROLE_LABELS[hud.assignments.unit3]}</span>
       <span>目前指令：{hud.tacticalCommand ? COMMAND_LABELS[hud.tacticalCommand] : "正常追蹤"}</span>
+      {hud.tacticalCommand === "take-primary" && <span>PIT 仍由玩家執行 · Q2 交回主追</span>}
       <i>嫌犯可駕駛度 {Math.round(hud.suspectDriveability * 100)}%</i>
     </section>
     <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>

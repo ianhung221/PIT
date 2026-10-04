@@ -1,4 +1,5 @@
 import type { PursuitRole, RadioCommand, RadioFeedback } from "../types/game.ts";
+import type { BlockadeState } from "./supportContainment.ts";
 
 export const ROLE_LABELS: Record<PursuitRole, string> = { primary: "主追", secondary: "第二順位", tertiary: "第三順位", "containment-front": "車頭封鎖", "containment-rear": "車尾封鎖" };
 export const COMMAND_LABELS: Record<RadioCommand, string> = { "request-pit": "請求 PIT 授權", "prepare-pit": "準備執行 PIT", "move-up": "第二單位靠近", "block-front": "封鎖嫌犯車頭", "take-primary": "接替主追單位", terminate: "終止追逐" };
@@ -10,13 +11,15 @@ export function nextTacticalCommand(current: RadioCommand | null, received: Radi
 export function tacticalFeedback(command: RadioCommand, suspectStopped: boolean, arrived: boolean, recovering: boolean): Pick<RadioFeedback, "phase" | "message"> {
   if (command === "block-front" && !suspectStopped) return { phase: "unable", message: "條件不足，等待嫌犯減速；後援維持追蹤" };
   if (recovering) return { phase: "executing", message: "後援受阻，正在倒車脫困後繼續執行" };
-  if (arrived) return { phase: "completed", message: command === "take-primary" ? "02 已到主追位置；Q2 可交回玩家主追" : "後援已到指定位置，持續維持隊形" };
+  if (arrived) return { phase: "completed", message: command === "take-primary" ? "02 已接替領追，PIT 仍由玩家執行；Q2 交回主追" : "後援已到指定位置，持續維持隊形" };
+  if (command === "take-primary") return { phase: "executing", message: "02 正在接替領追；PIT 仍由玩家執行" };
   return { phase: "executing", message: "後援正沿道路前往指定位置" };
 }
 
 export interface PursuitCoordinationInput {
   command?: RadioCommand | null; pitQualified: boolean; suspectStopped: boolean;
   suspectDriveable: boolean; playerDriveability: number;
+  blockadePhase?: BlockadeState["phase"];
 }
 
 export interface PursuitAssignments {
@@ -26,17 +29,26 @@ export interface PursuitAssignments {
 
 export function coordinatePursuit(input: PursuitCoordinationInput): PursuitAssignments {
   if (input.command === "terminate") return { player: "primary", unit2: "secondary", unit3: "tertiary", phase: "terminated" };
+  if (input.command === "block-front" && input.blockadePhase) {
+    if (input.blockadePhase === "approaching" || input.blockadePhase === "holding") {
+      return { player: "primary", unit2: "containment-front", unit3: "containment-rear", phase: "containment" };
+    }
+    return { player: "primary", unit2: "secondary", unit3: "tertiary", phase: "pursuit" };
+  }
+  if (input.command === "take-primary") return { player: "secondary", unit2: "primary", unit3: "tertiary", phase: "pursuit" };
+  if (input.command === "prepare-pit" || input.command === "move-up") {
+    return input.playerDriveability < .36
+      ? { player: "secondary", unit2: "primary", unit3: "tertiary", phase: "pursuit" }
+      : { player: "primary", unit2: "secondary", unit3: "tertiary", phase: "pit-ready" };
+  }
   if (input.pitQualified && (input.suspectStopped || !input.suspectDriveable)) {
     return { player: "primary", unit2: "containment-front", unit3: "containment-rear", phase: "containment" };
   }
   if (input.command === "block-front" && input.suspectStopped) {
     return { player: "primary", unit2: "containment-front", unit3: "containment-rear", phase: "containment" };
   }
-  if (input.playerDriveability < .36 || input.command === "take-primary") {
+  if (input.playerDriveability < .36) {
     return { player: "secondary", unit2: "primary", unit3: "tertiary", phase: "pursuit" };
-  }
-  if (input.command === "prepare-pit" || input.command === "move-up") {
-    return { player: "primary", unit2: "secondary", unit3: "tertiary", phase: "pit-ready" };
   }
   return { player: "primary", unit2: "secondary", unit3: "tertiary", phase: "pursuit" };
 }

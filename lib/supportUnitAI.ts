@@ -46,7 +46,8 @@ export function supportSlot(input: { road: GeneratedRoad; player: CarSnapshot; s
     const segment = road.segments[input.suspectIndex];
     side = (x - segment.x) * Math.cos(segment.yaw) - (z - segment.z) * Math.sin(segment.yaw);
     speed = 0;
-  } else if (command === "prepare-pit") { distance = s - (unit === 0 ? 24 : 38); speed = Math.max(0, suspect.speed); }
+  } else if (command === "block-front") { distance = s - (unit === 0 ? 18 : 30); speed = Math.max(0, suspect.speed); }
+  else if (command === "prepare-pit") { distance = s - (unit === 0 ? 24 : 38); speed = Math.max(0, suspect.speed); }
   else if (command === "move-up" && unit === 0) { distance = Math.min(s - 12, Math.max(p + 12, s - 35)); speed = Math.max(0, suspect.speed); }
   return { ...roadPoint(road, distance, side), distance, side, speed, role };
 }

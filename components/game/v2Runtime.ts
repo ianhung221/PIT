@@ -13,6 +13,7 @@ import type {
 } from "@/types/game";
 import type { SuspectRecoveryMode } from "@/lib/gameRules";
 import { makeSupportAI, type SupportAIState } from "@/lib/supportUnitAI";
+import { makeBlockade, type BlockadeState } from "@/lib/supportContainment";
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -55,6 +56,7 @@ export interface V2Runtime {
   radioFeedback: RadioFeedback | null;
   supportAi: [SupportAIState, SupportAIState];
   supportArrivedFor: [number, number];
+  blockade: BlockadeState;
   outcome: MissionOutcome;
   result: V2Result;
   attempts: number;
@@ -96,6 +98,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     radioFeedback: null,
     supportAi: [makeSupportAI(-2.1, 18), makeSupportAI(2.1, 29)],
     supportArrivedFor: [0, 0],
+    blockade: makeBlockade(),
     outcome: "playing",
     result: "playing",
     attempts: 0,

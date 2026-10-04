@@ -14,9 +14,9 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
       await command("Input.dispatchKeyEvent", { type: "keyUp", key: "q" });
     }
     await delay(1000);
-    console.log("support: radio", n, await evaluate(`({ tactical:window.__pitInspect().runtime.tacticalCommand, message:document.querySelector('.radio-feedback').textContent, roles:document.querySelector('.hud-units').textContent })`));
+    console.log("support: radio", n, await evaluate(`({ tactical:window.__pitInspect().runtime.tacticalCommand, message:document.querySelector('.radio-feedback')?.textContent ?? window.__pitInspect().runtime.radioFeedback?.message, roles:document.querySelector('.hud-units').textContent })`));
   };
-  await evaluate(`window.__placeSupportFixture = (kind) => {
+  await evaluate(`window.__placeSupportFixture = (kind, preserveCommand=false) => {
     const { runtime:s, bodies } = window.__pitInspect();
     const place = (body, snapshot, index, side, longitudinal, yawOffset=0, speed=0) => {
       const seg=s.road.segments[index], yaw=seg.yaw+yawOffset;
@@ -26,7 +26,9 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
       body.setLinvel({x:-Math.sin(yaw)*speed,y:0,z:-Math.cos(yaw)*speed},true); body.setAngvel({x:0,y:0,z:0},true);
       Object.assign(snapshot,{x,z,yaw,speed,lateralSpeed:0});
     };
-    s.elapsed=0; s.pitQualified=false; s.pitCandidate=null; s.containmentElapsed=0; s.tacticalCommand=null; s.radioFeedback=null;
+    s.elapsed=0; s.pitQualified=false; s.pitCandidate=null; s.containmentElapsed=0; if(!preserveCommand) s.tacticalCommand=null; s.radioFeedback=null;
+    s.blockade={phase:'waiting',elapsed:0,slowFor:0,fastFor:0,reason:'',anchor:null,stages:[0,0],settled:[0,0],blockedFor:[0,0]};
+    s.commandAt=0;
     if(kind==='walls') {
       place(bodies[0],s.player,3,0,0); place(bodies[1],s.suspect,4,0,0,0,25);
       const width=s.road.segments[1].width;
@@ -39,7 +41,7 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
       s.playerRoadIndex=0;s.suspectRoadIndex=2;s.supportRoadIndices=[1,1];
       s.suspectDamage.engine=.05;s.suspectDamage.steering=.05;
     } else if(kind==='slow') {
-      place(bodies[0],s.player,1,-3,-28); place(bodies[1],s.suspect,1,0,0);
+      place(bodies[0],s.player,1,-3,-45); place(bodies[1],s.suspect,1,0,0);
       place(bodies[2],s.supports[0],1,3,-18); place(bodies[3],s.supports[1],1,-2,-32);
       s.playerRoadIndex=1;s.suspectRoadIndex=1;s.supportRoadIndices=[1,1];
       s.suspectDamage.engine=.05;s.suspectDamage.steering=.05;
@@ -79,18 +81,26 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
   if(await evaluate(`window.__pitInspect().runtime.tacticalCommand!=='take-primary'`)) throw new Error("Repeated key sent command");
   await radio(2);
   await radio(4);
-  if(await evaluate(`window.__pitInspect().runtime.radioFeedback.phase!=='unable'`)) throw new Error("Fast block command should wait");
+  if(await evaluate(`window.__pitInspect().runtime.blockade.phase!=='waiting'`)) throw new Error("Fast block command should stay armed");
   await capture("support-radio-waiting");
-  await key("p"); await evaluate(`window.__placeSupportFixture('slow')`); await key("p");
-  await radio(4,true);
+  await key("p"); await evaluate(`window.__placeSupportFixture('slow',true)`); await key("p");
   try {
     await waitFor(`window.__pitInspect().runtime.radioFeedback?.phase==='completed'`, "support-front-block");
   } catch (error) {
-    console.log("support: blocked diagnostic", await evaluate(`({cars:window.__pitInspect().runtime.supports,ai:window.__pitInspect().runtime.supportAi,suspect:window.__pitInspect().runtime.suspect,arrived:window.__pitInspect().runtime.supportArrivedFor})`));
+    console.log("support: blocked diagnostic", await evaluate(`({cars:window.__pitInspect().runtime.supports,ai:window.__pitInspect().runtime.supportAi,suspect:window.__pitInspect().runtime.suspect,blockade:window.__pitInspect().runtime.blockade})`));
     throw error;
   }
   await capture("support-front-block");
   console.log("support: block completed",await evaluate(`window.__pitInspect().runtime.supportArrivedFor`));
+  const positions = await evaluate(`(() => {const s=window.__pitInspect().runtime, a=s.blockade.anchor; return s.supports.map(c=>({forward:-(c.x-s.suspect.x)*Math.sin(a.yaw)-(c.z-s.suspect.z)*Math.cos(a.yaw),side:(c.x-s.suspect.x)*Math.cos(a.yaw)-(c.z-s.suspect.z)*Math.sin(a.yaw),speed:Math.hypot(c.speed,c.lateralSpeed)}));})()`);
+  if(positions[0].forward<4 || positions[1].forward>-4 || positions.some(p=>Math.abs(p.side)>.8 || p.speed>.7)) throw new Error("Q4 completed without physical front/rear positions: "+JSON.stringify(positions));
+  console.log("support: physical blockade",positions);
+  await radio(1);
+  if(await evaluate(`window.__pitInspect().runtime.tacticalCommand!=='block-front'`)) throw new Error("Q1 canceled Q4");
+  await evaluate(`(() => { const {runtime:s,bodies}=window.__pitInspect(); const yaw=s.road.segments[s.suspectRoadIndex].yaw; s.suspectDamage.engine=1;s.suspectDamage.steering=1; bodies[1].setLinvel({x:-Math.sin(yaw)*24,y:0,z:-Math.cos(yaw)*24},true); })()`);
+  await waitFor(`window.__pitInspect().runtime.blockade.phase==='missed'`, "blockade-escape");
+  if(await evaluate(`window.__pitInspect().runtime.tacticalCommand!=='block-front'`)) throw new Error("Escape discarded Q4 standby");
+  await capture("support-blockade-missed");
   for (const n of [2,3,5]) {
     await key("p"); await evaluate(`window.__placeSupportFixture('formation')`); await key("p");
     await radio(n, true);
@@ -101,4 +111,9 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
   await radio(6);
   if(await evaluate(`window.__pitInspect().runtime.result==='playing'`)) throw new Error("Terminate did not finish mission");
   await capture("support-debrief");
+  await evaluate(`document.querySelector('.debrief-actions button').click()`);
+  await delay(1000);
+  const restarted = await evaluate(`(() => { const s=window.__pitInspect().runtime; return {result:s.result,command:s.tacticalCommand,phase:s.blockade.phase,anchor:s.blockade.anchor}; })()`);
+  if(restarted.result!=="playing" || restarted.command!==null || restarted.phase!=="waiting" || restarted.anchor!==null) throw new Error("Restart retained blockade state: "+JSON.stringify(restarted));
+  console.log("support: restart reset",restarted);
 }
