@@ -29,6 +29,17 @@ function extent(yaw: number, length: number, width: number) {
   return { side: Math.abs(Math.sin(yaw)) * length / 2 + Math.abs(Math.cos(yaw)) * width / 2,
     forward: Math.abs(Math.cos(yaw)) * length / 2 + Math.abs(Math.sin(yaw)) * width / 2 };
 }
+
+// One geometric standard for radio arrival and mission victory, regardless of Q4.
+export function containmentPose(unit: 0 | 1, car: CarSnapshot, suspect: CarSnapshot, roadYaw: number) {
+  const local = blockadeLocal({ ...suspect, yaw: roadYaw }, car);
+  const dimensions = unit === 0 ? VEHICLES.patrol : VEHICLES.suv;
+  const minimumGap = extent(suspect.yaw - roadYaw, SUSPECT.length, SUSPECT.width).forward
+    + extent(car.yaw - roadYaw, dimensions.length, dimensions.width).forward;
+  const gap = (unit === 0 ? local.forward : -local.forward) - minimumGap;
+  return gap >= .12 && gap <= 1.25 && Math.abs(local.side) < .8
+    && Math.abs(normalizeAngle(roadYaw - car.yaw)) < .25 && planar(car) < .65 && planar(suspect) < 1.2;
+}
 function inRoad(road: GeneratedRoad, point: Point, yaw: number, index: number, unit: number) {
   const i = closestRoadSegment(road, point.x, point.z, index), segment = road.segments[i];
   const dimensions = unit === 0 ? VEHICLES.patrol : VEHICLES.suv;
@@ -140,14 +151,8 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
   const projected = { x: car.x - Math.sin(car.yaw) * speed * .5, z: car.z - Math.cos(car.yaw) * speed * .5 };
   if (!inRoad(road, projected, car.yaw, a.index, unit)) { speed = 0; blocked = true; }
   state.blockedFor[unit] = blocked && distance > 1.2 ? state.blockedFor[unit] + dt : 0;
-  const suspectLocal = blockadeLocal(a, suspect);
-  const dimensions = unit === 0 ? VEHICLES.patrol : VEHICLES.suv;
-  const minimumGap = extent(suspect.yaw - a.yaw, SUSPECT.length, SUSPECT.width).forward
-    + extent(car.yaw - a.yaw, dimensions.length, dimensions.width).forward + .15;
-  const correctlyPlaced = unit === 0 ? local.forward - suspectLocal.forward > minimumGap : suspectLocal.forward - local.forward > minimumGap;
-  const arrived = (unit === 1 ? frontClear : state.stages[0] === 3) && correctlyPlaced
-    && Math.hypot(final.x - car.x, final.z - car.z) < 1.05 && Math.abs(local.side - suspectLocal.side) < .8
-    && Math.abs(normalizeAngle(a.yaw - car.yaw)) < .25 && planar(car) < .65 && planar(suspect) < 1.2;
+  const arrived = (unit === 1 ? frontClear : state.stages[0] === 3)
+    && Math.hypot(final.x - car.x, final.z - car.z) < 1.05 && containmentPose(unit, car, suspect, a.yaw);
   state.settled[unit] = arrived ? state.settled[unit] + dt : 0;
   if (arrived) speed = 0;
   return { speed, yawError: arrived ? normalizeAngle(a.yaw - car.yaw) : yawError, arrived, modeChanged: false };

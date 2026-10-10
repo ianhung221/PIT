@@ -11,9 +11,8 @@ import { RadioCommandWheel } from "@/components/game/RadioCommandWheel";
 import { V2VehicleSimulation, type V2HudData } from "@/components/game/V2VehicleSimulation";
 import { V2Weather } from "@/components/game/V2Weather";
 import { VehicleMirrors } from "@/components/game/VehicleMirrors";
-import { logRuntimeEvent, makeV2Runtime, updateRadioFeedback, type V2Result, type V2Runtime } from "@/components/game/v2Runtime";
+import { logRuntimeEvent, makeV2Runtime, updateRadioFeedback, refreshPitAuthorization, type V2Result, type V2Runtime } from "@/components/game/v2Runtime";
 import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEATHER, type CameraMode, type MissionConfig } from "@/lib/gameConfig";
-import { evaluatePitRisk } from "@/lib/pitPolicy";
 import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } from "@/lib/pursuitCoordinator";
 import { vehicleDriveability } from "@/lib/vehicleDamage";
 import { makeBlockade } from "@/lib/supportContainment";
@@ -94,6 +93,9 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   const [hud, setHud] = useState<V2HudData>(() => ({
     radioFeedback: null,
     tacticalCommand: null,
+    contactFeedback: null,
+    authorizationExpires: 0,
+    missionStage: "playing",
     speed: 0,
     distance: 32,
     targetBearing: 0,
@@ -134,26 +136,13 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     updateRadioFeedback(state, { command, phase: "received", message: `${COMMAND_LABELS[command]}・已接收` });
     setRadio(state.radioFeedback);
     if (command === "request-pit") {
-      const segment = state.road.segments[state.suspectRoadIndex];
-      const trafficDensity = segment.biome === "city" ? .58 : segment.biome === "highway" ? .38 : .16;
-      const decision = evaluatePitRisk({
-        speedKph: Math.abs(state.suspect.speed) * 3.6,
-        weatherGrip: WEATHER[config.weather].grip,
-        visibility: WEATHER[config.weather].visibility,
-        roadRisk: segment.risk,
-        trafficDensity,
-        obstacleRisk: segment.biome === "city" ? .5 : .2,
-        offenseSeverity: .86,
-        supportUnits: 2,
-        targetClass: "car",
-      });
-      state.authorization = decision.authorization;
-      state.authorizationReason = decision.reasons.join("、");
-      logRuntimeEvent(state, "指揮中心：" + decision.authorization.toUpperCase() + " — " + state.authorizationReason);
+      state.authorizationRequested = true;
+      refreshPitAuthorization(state, config, state.suspect, true);
       setPolicy({ authorization: state.authorization, reason: state.authorizationReason });
       updateRadioFeedback(state, { command, phase: "completed", message: `指揮中心已接收並完成評估：${state.authorization.toUpperCase()} — ${state.authorizationReason}` });
       setRadio(state.radioFeedback);
     } else if (command === "terminate") {
+      state.authorizationRequested = false;
       state.authorization = "terminate";
       state.authorizationReason = "玩家依公共安全風險主動終止追逐";
       state.result = "failed";
@@ -180,7 +169,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       };
       logRuntimeEvent(state, labels[command]);
     }
-  }, [config.weather]);
+  }, [config]);
 
   const restart = () => {
     keys.current.clear();
@@ -188,6 +177,9 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     setHud({
       radioFeedback: null,
       tacticalCommand: null,
+      contactFeedback: null,
+      authorizationExpires: 0,
+      missionStage: "playing",
       speed: 0,
       distance: 32,
       targetBearing: 0,
@@ -261,6 +253,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     </section>
     <section className={"hud-policy " + policyClass}>
       <small>PIT AUTHORIZATION</small><strong>{authorization.toUpperCase()}</strong><span>{policy.reason}</span>
+      {hud.authorizationExpires > 0 && <span>持續評估中 · 接觸時再次核對</span>}
     </section>
     <section className="hud-units">
       <small>UNIT COORDINATION</small><strong>01 {ROLE_LABELS[hud.assignments.player]}</strong>
@@ -268,6 +261,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       <span>目前指令：{hud.tacticalCommand ? COMMAND_LABELS[hud.tacticalCommand] : "正常追蹤"}</span>
       {hud.tacticalCommand === "take-primary" && <span>PIT 仍由玩家執行 · Q2 交回主追</span>}
       <i>嫌犯可駕駛度 {Math.round(hud.suspectDriveability * 100)}%</i>
+      {hud.missionStage === "stopped-mobile" && <span>有效 PIT 已確認 · 尚待完成控制</span>}
+      {hud.missionStage === "escaped-containment" && <span>嫌犯再次逃逸 · 保持追蹤</span>}
     </section>
     <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>
     {cameraMode === "auto" && hud.distance > CAMERA_SETTINGS.helicopterFocusDistance && <div
@@ -278,12 +273,13 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <div className="map-code">MAP {mapCode}</div>
     <div className="game-controls"><kbd>↑</kbd> 加速 · <kbd>↓</kbd> 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · <kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電 · <kbd>P</kbd> 暫停</div>
     <RadioCommandWheel disabled={result !== "playing"} onCommand={handleRadio} />
+    {result === "playing" && hud.contactFeedback && 90 - time - hud.contactFeedback.at < 4 && <div className={"contact-feedback contact-feedback--" + hud.contactFeedback.classification} role="status" aria-live="polite">{hud.contactFeedback.message}</div>}
     {result === "playing" && <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && 90 - time - radio.at < 8 ? radio.message : ""}</div>}
     {result !== "playing" && <div className="result-overlay"><div className={"result-card result-card--" + result}>
-      <span>{resultCopy.eyebrow}</span><h2>{resultCopy.title}</h2><p>{resultCopy.detail}</p>
+      <span>{resultCopy.eyebrow}</span><h2>{resultCopy.title}</h2><p>{result === "failed" && debrief.successfulContacts > 0 ? "有效 PIT 已記錄，但未在時限內完成失能或包圍控制。" : resultCopy.detail}</p>
       {result !== "paused" && <div className="debrief-grid">
         <span>PIT 嘗試 <b>{debrief.attempts}</b></span><span>有效接觸 <b>{debrief.successfulContacts}</b></span>
-        <span>未授權 <b>{debrief.unsafeContacts}</b></span><span>嫌犯車況 <b>{Math.round(debrief.suspectDriveability * 100)}%</b></span>
+        <span>未授權／不安全 <b>{debrief.unsafeContacts}</b></span><span>嫌犯車況 <b>{Math.round(debrief.suspectDriveability * 100)}%</b></span>
       </div>}
       {result !== "paused" && <ol className="debrief-log">{debrief.events.map((event, index) => <li key={event + "-" + index}>{event}</li>)}</ol>}
       <div className="debrief-actions">

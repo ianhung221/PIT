@@ -30,6 +30,19 @@ PIT Unit 是以 PIT 戰術訓練為核心的 3D 警車追逐模擬遊戲。玩�
 
     npm run verify:browser
 
+第五批亦提供可重現的 PIT 情境（PowerShell，先啟動 `node scripts/serve-pages.mjs`）：
+
+    $env:PIT_TEST_WORLD='true'
+    $env:PIT_TEST_PIT_SUPPORT='true'
+    $env:PIT_TEST_SCENE='highway'
+    $env:PIT_TEST_WEATHER='clear'
+    $env:PIT_TEST_QUALITY='medium'
+    $env:PIT_TEST_VEHICLE='suv'
+    $env:PIT_TEST_AUTO='true'
+    node scripts/browser-smoke.mjs
+
+接觸以初始車位與實際按鍵建立，由 Rapier 自然判定，不注入 `pitQualified`。`PIT_TEST_CONTACT=center`／`unauthorized` 分別驗證錯誤部位及未授權；`PIT_TEST_ESCAPE=true` 觀察再次逃逸。`PIT_TEST_HOLD=true`／`PIT_TEST_DISABLED=true` 在自然合格 PIT 後隔離停車幾何或引擎失能分支，不代表 AI 自動完成或單次碰撞必然造成失能。一次只開一種測試，切換前清除不需要的環境變數；用 `PIT_TEST_URL` 可測正式站。
+
 ## 發布
 
 推送到 main 後，GitHub Actions 會安裝依賴、執行 lint 與測試、建立並驗證靜態輸出，最後發布 dist/client。

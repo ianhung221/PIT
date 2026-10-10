@@ -5,6 +5,7 @@ import {
   CuboidCollider,
   RigidBody,
   useBeforePhysicsStep,
+  useAfterPhysicsStep,
   type CollisionEnterPayload,
   type RapierRigidBody,
 } from "@react-three/rapier";
@@ -12,19 +13,17 @@ import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { VehicleModel } from "@/components/game/VehicleModel";
 import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
-import { logRuntimeEvent, updateRadioFeedback } from "@/components/game/v2Runtime";
+import { logRuntimeEvent, updateRadioFeedback, refreshPitAuthorization } from "@/components/game/v2Runtime";
 import {
-  PIT_RULES,
   SCENES,
   SUSPECT,
   VEHICLES,
   WEATHER,
+  vehicleColliderStrips,
   type CameraMode,
   type MissionConfig,
 } from "@/lib/gameConfig";
 import {
-  evaluatePitContact,
-  evaluatePitOutcome,
   isSuspectRecoveryNeeded,
   nextSuspectRecoveryMode,
   normalizeAngle,
@@ -34,11 +33,12 @@ import {
   suspectReverseEscapeYaw,
 } from "@/lib/gameRules";
 import { closestRoadSegment, roadTarget } from "@/lib/proceduralMap";
-import { assessPitImpact } from "@/lib/pitSimulation";
+import { classifyPhysicalContact, localPoint, physicalPitOutcome, pitMissionResolution, V2_PIT, type ContactFeedback } from "@/lib/pitContact";
+import { suspectRoadCruise } from "@/lib/pitPolicy";
 import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
 import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
 import { driveSupport } from "@/lib/supportDriving";
-import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade } from "@/lib/supportContainment";
+import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade, containmentPose } from "@/lib/supportContainment";
 import { applyImpactDamage, vehicleCanContinue, vehicleDriveability } from "@/lib/vehicleDamage";
 import type { MissionOutcome, RadioFeedback, RadioCommand } from "@/types/game";
 import type { PitAuthorization } from "@/types/game";
@@ -69,6 +69,9 @@ export interface V2HudData {
   assignments: PursuitAssignments;
   radioFeedback: RadioFeedback | null;
   tacticalCommand: RadioCommand | null;
+  contactFeedback: ContactFeedback | null;
+  authorizationExpires: number;
+  missionStage: MissionOutcome;
 }
 
 interface FinishData {
@@ -95,15 +98,13 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
   const support2Ref = useRef<RapierRigidBody>(null);
   const support3Ref = useRef<RapierRigidBody>(null);
   const lastUi = useRef(0);
+  const preImpact = useRef<{player: BodyFrame; suspect: BodyFrame} | null>(null);
+  const activeContacts = useRef(new Set<string>());
   const temp = useMemo(() => ({
     quaternion: new THREE.Quaternion(),
-    inverseQuaternion: new THREE.Quaternion(),
     forward: new THREE.Vector3(),
     right: new THREE.Vector3(),
     velocity: new THREE.Vector3(),
-    relative: new THREE.Vector3(),
-    contact: new THREE.Vector3(),
-    toward: new THREE.Vector3(),
     euler: new THREE.Euler(0, 0, 0, "YXZ"),
   }), []);
 
@@ -136,90 +137,96 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     onFinish({ result, outcome });
   };
 
-  const handleVehicleCollision = (event: CollisionEnterPayload) => {
+  const handleVehicleCollision = (event: Pick<CollisionEnterPayload, "manifold"> & {other: {rigidBody: {handle: number}}}) => {
     const player = playerRef.current;
     const suspect = suspectRef.current;
     if (!player || !suspect || event.other.rigidBody?.handle !== suspect.handle) return;
     const state = runtime.current;
+    if (state.result !== "playing" || state.collisionCooldown > 0 || state.pitCandidate) return;
+    const manifold = event.manifold;
+    if (!manifold.numSolverContacts()) {
+      state.contactFeedback = { classification: "scrape", message: "一般碰撞：接觸資料不足，不列入 PIT", at: state.elapsed };
+      return;
+    }
+    // Solver contacts are world-space points; flipped does not affect them.
+    // Average the actual face instead of selecting a favourable rear-most point.
+    let x = 0, z = 0;
+    for (let i = 0; i < manifold.numSolverContacts(); i++) {
+      const point = manifold.solverContactPoint(i); x += point.x; z += point.z;
+    }
+    x /= manifold.numSolverContacts(); z /= manifold.numSolverContacts();
     const playerPosition = player.translation();
     const suspectPosition = suspect.translation();
-    const suspectRotation = suspect.rotation();
-    const playerRotation = player.rotation();
-    const playerVelocity = player.linvel();
-    const suspectVelocity = suspect.linvel();
-    temp.quaternion.set(suspectRotation.x, suspectRotation.y, suspectRotation.z, suspectRotation.w);
-    temp.inverseQuaternion.copy(temp.quaternion).invert();
-    temp.contact.set(playerPosition.x - suspectPosition.x, 0, playerPosition.z - suspectPosition.z).applyQuaternion(temp.inverseQuaternion);
-    temp.toward.set(suspectPosition.x - playerPosition.x, 0, suspectPosition.z - playerPosition.z).normalize();
-    temp.relative.set(playerVelocity.x - suspectVelocity.x, 0, playerVelocity.z - suspectVelocity.z);
-    const closingSpeed = temp.relative.dot(temp.toward);
-    temp.quaternion.set(playerRotation.x, playerRotation.y, playerRotation.z, playerRotation.w);
-    const playerYaw = temp.euler.setFromQuaternion(temp.quaternion, "YXZ").y;
-    temp.quaternion.set(suspectRotation.x, suspectRotation.y, suspectRotation.z, suspectRotation.w);
-    const suspectYaw = temp.euler.setFromQuaternion(temp.quaternion, "YXZ").y;
-    const contact = evaluatePitContact({
-      localX: temp.contact.x,
-      localZ: temp.contact.z,
-      suspectHalfWidth: SUSPECT.width / 2,
-      suspectHalfLength: SUSPECT.length / 2,
-      closingSpeed,
-      headingDelta: normalizeAngle(playerYaw - suspectYaw),
-      cooldown: state.collisionCooldown,
-      hasCandidate: state.pitCandidate !== null,
-    });
+    const playerFrame = bodyFrame(player), suspectFrame = bodyFrame(suspect);
+    const previous = preImpact.current ?? { player: playerFrame, suspect: suspectFrame };
+    const local = localPoint({x:suspectPosition.x,z:suspectPosition.z,yaw:suspectFrame.yaw}, {x,z});
+    const playerLocal = localPoint({x:playerPosition.x,z:playerPosition.z,yaw:playerFrame.yaw}, {x,z});
+    const normal = manifold.normal();
+    const sign = normal.x * (suspectPosition.x - playerPosition.x) + normal.z * (suspectPosition.z - playerPosition.z) >= 0 ? 1 : -1;
+    const nx = normal.x * sign, nz = normal.z * sign;
+    const dx = previous.player.velocityX - previous.suspect.velocityX;
+    const dz = previous.player.velocityZ - previous.suspect.velocityZ;
+    const closingSpeed = Math.hypot(dx, dz), normalSpeed = Math.max(0, dx * nx + dz * nz);
+    refreshPitAuthorization(state, config, { ...state.suspect, speed: previous.suspect.forwardSpeed, lateralSpeed: previous.suspect.lateralSpeed }, true);
+    const assessment = classifyPhysicalContact({ localX:local.x, localZ:local.z, playerLocalX:playerLocal.x, playerLocalZ:playerLocal.z,
+      normalSide:nx * suspectFrame.rightX + nz * suspectFrame.rightZ, closingSpeed, normalSpeed,
+      headingDelta:normalizeAngle(previous.player.yaw - previous.suspect.yaw), halfWidth:SUSPECT.width/2, halfLength:SUSPECT.length/2,
+      playerHalfLength:VEHICLES[config.vehicle].length/2,
+      authorized:state.authorization === "authorized" && state.authorizationExpires >= state.elapsed });
     state.collisionCooldown = .5;
-    const impact = Math.max(2, Math.abs(closingSpeed) * 1.7);
+    const impact = Math.max(2, normalSpeed * 2);
     state.suspectDamage = applyImpactDamage(state.suspectDamage, {
       impulse: impact,
-      localX: temp.contact.x,
-      localZ: temp.contact.z,
+      localX: local.x,
+      localZ: local.z,
       halfWidth: SUSPECT.width / 2,
       halfLength: SUSPECT.length / 2,
     });
     state.playerDamage = applyImpactDamage(state.playerDamage, {
       impulse: impact * .72,
-      localX: -temp.contact.x,
-      localZ: -temp.contact.z,
+      localX: playerLocal.x,
+      localZ: playerLocal.z,
       halfWidth: VEHICLES[config.vehicle].width / 2,
       halfLength: VEHICLES[config.vehicle].length / 2,
     });
-    if (!contact.valid || contact.side === 0) {
-      logRuntimeEvent(state, "一般碰撞：未形成有效 PIT 接觸");
-      return;
-    }
+    state.contactFeedback = { classification: assessment.classification, message: assessment.reason, at: state.elapsed };
+    logRuntimeEvent(state, assessment.reason);
+    if (assessment.classification === "scrape") return;
     state.attempts += 1;
-    const assessment = assessPitImpact({
-      localX: temp.contact.x,
-      localZ: temp.contact.z,
-      halfWidth: SUSPECT.width / 2,
-      halfLength: SUSPECT.length / 2,
-      relativeSpeed: closingSpeed,
-      headingDelta: normalizeAngle(playerYaw - suspectYaw),
-      effectiveMass: (player.mass() * suspect.mass()) / Math.max(.1, player.mass() + suspect.mass()),
-      roadGrip: WEATHER[config.weather].grip,
-      authorized: state.authorization === "authorized",
-    });
     if (assessment.classification !== "effective") {
       state.unsafeContacts += 1;
       state.outcome = "unsafe-pit";
-      logRuntimeEvent(state, assessment.reason + "：不列入有效 PIT");
       return;
     }
-    const quality = assessment.quality;
-    const suspectFrame = bodyFrame(suspect);
     state.pitCandidate = {
-      startYaw: suspectFrame.yaw,
-      startSpeed: Math.max(1, suspectFrame.forwardSpeed),
-      expires: state.elapsed + PIT_RULES.evaluationWindow,
-      side: contact.side,
+      startYaw: previous.suspect.yaw,
+      startSpeed: Math.hypot(previous.suspect.velocityX, previous.suspect.velocityZ),
+      expires: state.elapsed + V2_PIT.window,
+      side: local.x > 0 ? 1 : -1,
       authorized: true,
-      quality,
+      quality: Math.min(1, normalSpeed / 5),
+      contactTime: 1 / 60,
     };
     state.pit = 18;
-    const torqueCompensation = THREE.MathUtils.clamp(assessment.yawTorque * .32, .35, 1.35);
-    suspect.applyTorqueImpulse({ x: 0, y: contact.side * (torqueCompensation / WEATHER[config.weather].grip), z: 0 }, true);
     logRuntimeEvent(state, "PIT 接觸成立：正在評估旋轉與減速");
   };
+
+  // Frame-batched collision events may report a later contact after several
+  // substeps. Sample each fixed step with its matching pre-impact velocity.
+  useAfterPhysicsStep(world => {
+    const player = playerRef.current, suspect = suspectRef.current;
+    if (!player || !suspect || runtime.current.result !== "playing") return;
+    const touching = new Set<string>();
+    for (let i = 0; i < player.numColliders(); i++) for (let j = 0; j < suspect.numColliders(); j++) {
+      const key = `${i}:${j}`;
+      world.contactPair(player.collider(i), suspect.collider(j), manifold => {
+        if (!manifold.numSolverContacts()) return;
+        touching.add(key);
+        if (!activeContacts.current.has(key)) handleVehicleCollision({manifold, other:{rigidBody:{handle:suspect.handle}}});
+      });
+    }
+    activeContacts.current = touching;
+  });
 
   useBeforePhysicsStep((world) => {
     const player = playerRef.current;
@@ -234,6 +241,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const grip = WEATHER[config.weather].grip;
     const playerSpec = VEHICLES[config.vehicle];
     const playerFrame = bodyFrame(player);
+    preImpact.current = { player: playerFrame, suspect: bodyFrame(suspect) };
     const throttle = keys.current.has("arrowup") || keys.current.has("w");
     const brake = keys.current.has("arrowdown") || keys.current.has("s");
     const steer = steeringInput(keys.current.has("arrowleft") || keys.current.has("a"), keys.current.has("arrowright") || keys.current.has("d"));
@@ -267,6 +275,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const suspectFrame = bodyFrame(suspect);
     state.suspectRoadIndex = closestRoadSegment(state.road, suspectPosition.x, suspectPosition.z, state.suspectRoadIndex);
     const segment = state.road.segments[state.suspectRoadIndex];
+    refreshPitAuthorization(state, config, { ...state.suspect, speed:suspectFrame.forwardSpeed, lateralSpeed:suspectFrame.lateralSpeed });
     const targetSegment = roadTarget(state.road, state.suspectRoadIndex, 2);
     const roadHalfWidth = segment.width / 2 - 1.25;
     const segmentRightX = Math.cos(segment.yaw);
@@ -287,7 +296,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const looksStuck = planarSuspectSpeed < SUSPECT_RECOVERY.stuckSpeed
       && (boundaryRatio >= .72 || Math.abs(yawError) >= Math.PI * 48 / 180 || suspectFrame.forwardSpeed < -.5);
     ai.stalledFor = !state.pitCandidate && looksStuck ? ai.stalledFor + dt : Math.max(0, ai.stalledFor - dt * 2);
-    if (ai.mode === "driving" && !state.pitQualified && isSuspectRecoveryNeeded({
+    if (ai.mode === "driving" && !(state.pitQualified && state.containmentElapsed < 3.2) && isSuspectRecoveryNeeded({
       planarSpeed: planarSuspectSpeed,
       forwardSpeed: suspectFrame.forwardSpeed,
       yawError,
@@ -300,7 +309,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       ai.stalledFor = 0;
       logRuntimeEvent(state, "嫌犯受阻：AI 開始煞停、倒車與轉正");
     }
-    if (ai.mode !== "driving" && !state.pitCandidate && !state.pitQualified) {
+    if (ai.mode !== "driving" && !state.pitCandidate && !(state.pitQualified && state.containmentElapsed < 3.2)) {
       ai.modeElapsed += dt;
       const nextMode = nextSuspectRecoveryMode(ai.mode, ai.modeElapsed, yawError, suspectFrame.forwardSpeed);
       if (nextMode !== ai.mode) {
@@ -313,27 +322,30 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const suspectCanDrive = vehicleCanContinue(state.suspectDamage);
     const tireGrip = (state.suspectDamage.frontLeftGrip + state.suspectDamage.frontRightGrip + state.suspectDamage.rearLeftGrip + state.suspectDamage.rearRightGrip) / 4;
     const candidateControl = state.pitCandidate ? .18 : 1;
-    const effectiveMode = state.pitCandidate || state.pitQualified ? "driving" : ai.mode;
+    const effectiveMode = state.pitCandidate || (state.pitQualified && state.containmentElapsed < 3.2) ? "driving" : ai.mode;
     const steeringYaw = effectiveMode === "reversing" ? suspectReverseEscapeYaw(localRoadX) : desiredYaw;
     const steeringYawError = normalizeAngle(steeringYaw - suspectFrame.yaw);
     const turnLimit = effectiveMode === "reversing" ? .88 : effectiveMode === "realigning" ? .66 : .7;
     const targetAngular = THREE.MathUtils.clamp(steeringYawError * (effectiveMode === "reversing" ? 3.2 : 2.6), -turnLimit, turnLimit);
     const suspectAngular = suspect.angvel();
     const suspectSteering = state.suspectDamage.steering * state.suspectDamage.alignment;
-    suspect.setAngvel({
+    // Do not overwrite the collision-generated yaw rate during evaluation.
+    // Road-following angular velocity is a controller, not tyre physics.
+    if (!state.pitCandidate) suspect.setAngvel({
       x: 0,
       y: THREE.MathUtils.lerp(suspectAngular.y, targetAngular * suspectSteering, Math.min(1, dt * 2.7 * grip * candidateControl)),
       z: 0,
     }, true);
     const distanceToPlayer = Math.hypot(suspectPosition.x - state.player.x, suspectPosition.z - state.player.z);
     const pursuitBoost = distanceToPlayer < 17 ? 3 : 0;
-    const baseCruise = SCENES[segment.biome].aiSpeed * (.84 + grip * .16) + pursuitBoost;
+    const baseCruise = suspectRoadCruise(segment, roadTarget(state.road, state.suspectRoadIndex, 1), grip, pursuitBoost);
     let suspectTargetSpeed = baseCruise * suspectForwardSpeedScale(yawError) * (.45 + suspectDriveability * .55);
-    if (!suspectCanDrive || state.pitCandidate || (state.pitQualified && state.containmentElapsed < 3.2)) suspectTargetSpeed = 0;
+    if (!suspectCanDrive || (state.pitQualified && state.containmentElapsed < 3.2)) suspectTargetSpeed = 0;
     if (effectiveMode === "braking") suspectTargetSpeed = 0;
     if (effectiveMode === "reversing") suspectTargetSpeed = -6 * grip;
     if (effectiveMode === "realigning") suspectTargetSpeed = Math.abs(yawError) > Math.PI * 45 / 180 ? 0 : Math.min(8 * grip, suspectTargetSpeed);
-    const suspectAcceleration = THREE.MathUtils.clamp(suspectTargetSpeed - suspectFrame.forwardSpeed, -10, effectiveMode === "reversing" ? 3.5 : 5.5);
+    // During impact evaluation the driver coasts; no forced brake or bonus spin.
+    const suspectAcceleration = state.pitCandidate ? 0 : THREE.MathUtils.clamp(suspectTargetSpeed - suspectFrame.forwardSpeed, -10, effectiveMode === "reversing" ? 3.5 : 5.5);
     const suspectMass = suspect.mass();
     suspect.applyImpulse({
       x: suspectFrame.forwardX * suspectMass * suspectAcceleration * dt,
@@ -344,46 +356,49 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     suspect.applyImpulse({ x: suspectFrame.rightX * suspectLateral, y: 0, z: suspectFrame.rightZ * suspectLateral }, true);
 
     if (state.pitCandidate) {
-      const outcome = evaluatePitOutcome(
+      let touching = false;
+      for (let i = 0; i < player.numColliders(); i++) for (let j = 0; j < suspect.numColliders(); j++) {
+        world.contactPair(player.collider(i), suspect.collider(j), m => { if (m.numSolverContacts() > 0) touching = true; });
+      }
+      if (touching) state.pitCandidate.contactTime += dt;
+      const outcome = physicalPitOutcome(
         state.pitCandidate.startYaw,
         suspectFrame.yaw,
         state.pitCandidate.startSpeed,
-        Math.max(0, suspectFrame.forwardSpeed),
+        planarSuspectSpeed,
         suspectFrame.lateralSpeed,
+        state.pitCandidate.contactTime,
       );
       state.pit = outcome.progress;
       if (outcome.success) {
-        const candidate = state.pitCandidate;
-        state.suspectDamage = applyImpactDamage(state.suspectDamage, {
-          impulse: 14 + candidate.quality * 8,
-          localX: candidate.side * SUSPECT.width * .48,
-          localZ: SUSPECT.length * .38,
-          halfWidth: SUSPECT.width / 2,
-          halfLength: SUSPECT.length / 2,
-        });
         state.pitCandidate = null;
         state.pitQualified = true;
         state.containmentElapsed = 0;
+        state.heldFor = 0;
         state.successfulContacts += 1;
         state.outcome = vehicleCanContinue(state.suspectDamage) ? "stopped-mobile" : "disabled";
+        state.contactFeedback = { classification: "effective", message: "有效 PIT：失控已確認，尚待控制嫌犯", at:state.elapsed };
         logRuntimeEvent(state, vehicleCanContinue(state.suspectDamage) ? "有效 PIT：嫌犯車仍可行駛，後援開始包圍" : "有效 PIT：嫌犯車已失去行動能力");
       } else if (state.elapsed >= state.pitCandidate.expires) {
         state.pitCandidate = null;
         state.pit = 0;
+        state.contactFeedback = { classification:"scrape", message:"接觸未造成足夠失控，繼續追逐", at:state.elapsed };
         logRuntimeEvent(state, "PIT 未達旋轉／減速門檻，繼續追捕");
       }
     }
     if (state.pitQualified) state.containmentElapsed += dt;
 
-    const suspectSlow = Math.abs(suspectFrame.forwardSpeed) < 4.2;
+    const suspectSlow = planarSuspectSpeed < 4.2;
     const playerPosition = player.translation();
     const currentPlayer = { ...state.player, x: playerPosition.x, z: playerPosition.z, yaw: playerFrame.yaw, speed: playerFrame.forwardSpeed, lateralSpeed: playerFrame.lateralSpeed };
     const currentSuspect = { ...state.suspect, x: suspectPosition.x, z: suspectPosition.z, yaw: suspectFrame.yaw, speed: suspectFrame.forwardSpeed, lateralSpeed: suspectFrame.lateralSpeed };
-    if (state.tacticalCommand === "block-front") {
+    const automaticBlockade = !state.tacticalCommand && state.pitQualified;
+    const activeBlockade = state.tacticalCommand === "block-front" || automaticBlockade;
+    if (activeBlockade) {
       stepBlockade(state.blockade, { road: state.road, index: state.suspectRoadIndex, suspect: currentSuspect, supports: state.supports, player: currentPlayer, dt });
     }
     const assignments = coordinatePursuit({
-      command: state.tacticalCommand,
+      command: automaticBlockade ? "block-front" : state.tacticalCommand,
       pitQualified: state.pitQualified,
       suspectStopped: state.tacticalCommand === "block-front" ? Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2 : suspectSlow,
       suspectDriveable: suspectCanDrive,
@@ -392,18 +407,14 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     });
     state.supports[0].role = assignments.unit2;
     state.supports[1].role = assignments.unit3;
-    const frontX = suspectPosition.x + suspectFrame.forwardX * 6.2;
-    const frontZ = suspectPosition.z + suspectFrame.forwardZ * 6.2;
-    const rearX = suspectPosition.x - suspectFrame.forwardX * 5.4;
-    const rearZ = suspectPosition.z - suspectFrame.forwardZ * 5.4;
     state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
     [support2, support3].forEach((body, unit) => {
       const frame = bodyFrame(body), position = body.translation();
       const index = closestRoadSegment(state.road, position.x, position.z, state.supportRoadIndices[unit]);
       const car = { x: position.x, z: position.z, yaw: frame.yaw, speed: frame.forwardSpeed, lateralSpeed: frame.lateralSpeed };
-      const slot = supportSlot({ road: state.road, player: currentPlayer, suspect: currentSuspect, playerIndex: state.playerRoadIndex, suspectIndex: state.suspectRoadIndex, unit, role: unit === 0 ? assignments.unit2 : assignments.unit3, command: state.tacticalCommand });
+      const slot = supportSlot({ road: state.road, player: currentPlayer, suspect: currentSuspect, playerIndex: state.playerRoadIndex, suspectIndex: state.suspectRoadIndex, unit, role: unit === 0 ? assignments.unit2 : assignments.unit3, command: automaticBlockade ? "block-front" : state.tacticalCommand });
       const neighbors = [currentPlayer, currentSuspect, state.supports[1 - unit]];
-      const maneuver = state.tacticalCommand === "block-front" && state.supportAi[unit].mode === "driving"
+      const maneuver = activeBlockade && state.supportAi[unit].mode === "driving"
         ? blockadeControl(state.blockade, unit as 0 | 1, car, currentSuspect, neighbors, state.road, dt, grip) : null;
       const control = maneuver ?? stepSupportAI(state.supportAi[unit], { car, road: state.road, index, slot, dt, grip, maxSpeed: unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, neighbors });
       if (maneuver) { state.supportAi[unit].lastX = car.x; state.supportAi[unit].lastZ = car.z; state.supportAi[unit].stalledFor = 0; }
@@ -420,22 +431,27 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
 
     const support2Position = support2.translation();
     const support3Position = support3.translation();
-    const frontDistance = Math.hypot(support2Position.x - frontX, support2Position.z - frontZ);
-    const rearDistance = Math.hypot(support3Position.x - rearX, support3Position.z - rearZ);
-    if (state.pitQualified && !suspectCanDrive && suspectSlow && state.containmentElapsed > 1.2) {
-      finish("success", "disabled");
-      return;
-    }
-    if (state.pitQualified && suspectSlow && frontDistance < 7.5 && rearDistance < 7.5 && state.containmentElapsed > 1.4) {
-      finish("success", "contained");
+    const currentSupport = (body: RapierRigidBody) => {
+      const p = body.translation(), f = bodyFrame(body);
+      return {x:p.x,z:p.z,yaw:f.yaw,speed:f.forwardSpeed,lateralSpeed:f.lateralSpeed};
+    };
+    const frontDistance = Math.hypot(support2Position.x - suspectPosition.x, support2Position.z - suspectPosition.z);
+    const rearDistance = Math.hypot(support3Position.x - suspectPosition.x, support3Position.z - suspectPosition.z);
+    const roadYaw = state.blockade.anchor?.yaw ?? segment.yaw;
+    const held = containmentPose(0, currentSupport(support2), currentSuspect, roadYaw) && containmentPose(1, currentSupport(support3), currentSuspect, roadYaw);
+    state.heldFor = state.pitQualified && held ? state.heldFor + dt : 0;
+    const resolution = pitMissionResolution(state.pitQualified, suspectCanDrive, planarSuspectSpeed, state.containmentElapsed, state.heldFor);
+    if (resolution) {
+      logRuntimeEvent(state, resolution === "contained" ? "包圍確認：前後單位穩定守位" : "失能確認：合格 PIT 後嫌犯無法繼續駕駛");
+      finish("success", resolution);
       return;
     }
     if (state.pitQualified && suspectCanDrive && state.containmentElapsed > 8 && Math.abs(suspectFrame.forwardSpeed) > 8 && Math.min(frontDistance, rearDistance) > 9) {
       state.pitQualified = false;
       state.pit = 0;
+      state.heldFor = 0;
       state.outcome = "escaped-containment";
-      state.authorization = "unknown";
-      state.authorizationReason = "嫌犯重新逃逸，需重新評估 PIT 條件";
+      refreshPitAuthorization(state, config, currentSuspect, true);
       if (state.tacticalCommand === "block-front") {
         missBlockade(state.blockade, "嫌犯重新逃逸");
       } else {
@@ -482,11 +498,13 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         assignments,
         radioFeedback: state.radioFeedback,
         tacticalCommand: state.tacticalCommand,
+        contactFeedback: state.contactFeedback,
+        authorizationExpires: state.authorizationExpires,
+        missionStage: state.outcome,
       });
     }
   });
 
-  const playerSpec = VEHICLES[config.vehicle];
   return <>
     <RigidBody
       ref={playerRef}
@@ -499,9 +517,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       angularDamping={1.8}
       ccd
       canSleep={false}
-      onCollisionEnter={handleVehicleCollision}
     >
-      <CuboidCollider args={[playerSpec.width / 2, .48, playerSpec.length / 2]} mass={playerSpec.mass} friction={.68 * WEATHER[config.weather].grip} restitution={.08} contactSkin={.025} />
+      {vehicleColliderStrips(config.vehicle).map((s,i) => <CuboidCollider key={i} args={[s.halfWidth, .48, s.halfLength]} position={[0,0,s.z]} mass={s.mass} friction={.68 * WEATHER[config.weather].grip} restitution={.08} contactSkin={.005} />)}
       <VehicleModel police model={config.vehicle} unit="01" hideExterior={cameraMode === "driver"} />
     </RigidBody>
     <RigidBody
@@ -517,7 +534,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       ccd
       canSleep={false}
     >
-      <CuboidCollider args={[SUSPECT.width / 2, .48, SUSPECT.length / 2]} mass={SUSPECT.mass} friction={.66 * WEATHER[config.weather].grip} restitution={.08} contactSkin={.025} />
+      {vehicleColliderStrips("suspect").map((s,i) => <CuboidCollider key={i} args={[s.halfWidth,.48,s.halfLength]} position={[0,0,s.z]} mass={s.mass} friction={.66 * WEATHER[config.weather].grip} restitution={.08} contactSkin={.005} />)}
       <VehicleModel />
     </RigidBody>
     <RigidBody
@@ -533,7 +550,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       ccd
       canSleep={false}
     >
-      <CuboidCollider args={[VEHICLES.patrol.width / 2, .48, VEHICLES.patrol.length / 2]} mass={VEHICLES.patrol.mass} friction={.67 * WEATHER[config.weather].grip} restitution={.06} />
+      {vehicleColliderStrips("patrol").map((s,i) => <CuboidCollider key={i} args={[s.halfWidth,.48,s.halfLength]} position={[0,0,s.z]} mass={s.mass} friction={.67 * WEATHER[config.weather].grip} restitution={.06} />)}
       <VehicleModel police model="patrol" unit="02" />
     </RigidBody>
     <RigidBody
@@ -549,7 +566,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       ccd
       canSleep={false}
     >
-      <CuboidCollider args={[VEHICLES.suv.width / 2, .5, VEHICLES.suv.length / 2]} mass={VEHICLES.suv.mass} friction={.69 * WEATHER[config.weather].grip} restitution={.05} />
+      {vehicleColliderStrips("suv").map((s,i) => <CuboidCollider key={i} args={[s.halfWidth,.5,s.halfLength]} position={[0,0,s.z]} mass={s.mass} friction={.69 * WEATHER[config.weather].grip} restitution={.05} />)}
       <VehicleModel police model="suv" unit="03" />
     </RigidBody>
   </>;

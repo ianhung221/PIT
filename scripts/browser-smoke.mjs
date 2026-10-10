@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { verifySupportUnits } from "./browser-support.mjs";
 import { verifyDebrief } from "./browser-debrief.mjs";
 import { verifyPitSupport } from "./browser-pit-support.mjs";
+import { verifyPitPolicy } from "./browser-pit-policy.mjs";
+import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
 const worldCheck = process.env.PIT_TEST_WORLD === "true";
@@ -122,6 +124,8 @@ try {
     const sceneLabels = { city: "城市街區", country: "鄉間公路", highway: "州際高速" };
     [...document.querySelectorAll("button")].find(b => b.textContent.includes(sceneLabels[${JSON.stringify(scene)}])).click();
     [...document.querySelectorAll("button")].find(b => b.textContent === "白天").click();
+    if (${JSON.stringify(process.env.PIT_TEST_VEHICLE ?? "")} === "suv") [...document.querySelectorAll("button")].find(b => b.textContent.includes("警用 SUV")).click();
+    if (${JSON.stringify(process.env.PIT_TEST_VEHICLE ?? "")} === "suv") [...document.querySelectorAll("button")].find(b => b.textContent.includes("警用 SUV")).click();
     const q = { low: "低", medium: "中", high: "高" };
     [...document.querySelectorAll(".quality-field button")].find(b => b.textContent === q[${JSON.stringify(quality)}]).click();
     const select = document.querySelector('select[aria-label="選擇天候"]');
@@ -166,7 +170,11 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (process.env.PIT_TEST_PIT_SUPPORT === "true") {
+  if (process.env.PIT_TEST_POLICY === "true") {
+    if (!worldCheck) throw new Error("PIT_TEST_POLICY requires PIT_TEST_WORLD=true");
+    await verifyPitPolicy({ evaluate, delay });
+    if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
+  } else if (process.env.PIT_TEST_PIT_SUPPORT === "true") {
     if (!worldCheck) throw new Error("PIT_TEST_PIT_SUPPORT requires PIT_TEST_WORLD=true");
     await verifyPitSupport({ evaluate, command, delay, capture });
     if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
@@ -209,7 +217,9 @@ try {
     targetDirection: Boolean(document.querySelector(".target-direction"))
   })`);
   if (!helicopter.camera.includes("直升機")) throw new Error("The second camera switch did not enter helicopter view.");
-  if (!helicopter.targetDirection) throw new Error("The off-screen suspect direction indicator did not appear at long range.");
+  const range = Number.parseFloat(helicopter.distance);
+  if (range > CAMERA_SETTINGS.helicopterFocusDistance + 2 && !helicopter.targetDirection) throw new Error("The off-screen suspect direction indicator did not appear at long range.");
+  if (range < CAMERA_SETTINGS.helicopterFocusDistance - 2 && helicopter.targetDirection) throw new Error("The long-range indicator appeared while both cars were in focus range.");
   await capture("helicopter-long-range");
   console.log("browser: helicopter screenshot captured");
   if (worldCheck) {

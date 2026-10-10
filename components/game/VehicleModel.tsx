@@ -4,7 +4,7 @@
 import { Clone, useGLTF } from "@react-three/drei";
 import { Component, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
-import { SUSPECT, VEHICLES, VEHICLE_VISUALS, type VehicleId } from "@/lib/gameConfig";
+import { SUSPECT, VEHICLES, VEHICLE_VISUALS, VEHICLE_PROFILES, type VehicleId } from "@/lib/gameConfig";
 import { publicPath } from "@/lib/publicPath";
 
 const ASSETS = {
@@ -35,7 +35,7 @@ function LoadedVehicle({ asset, kind }: { asset: string; kind: VehicleId | "susp
     return instance;
   }, [scene]);
   const visual = VEHICLE_VISUALS[kind];
-  return <group position={[0, visual.positionY, 0]} rotation={[0, visual.rotationY, 0]} scale={visual.scale}>
+  return <group position={[0, visual.positionY, VEHICLE_PROFILES[kind].positionZ]} rotation={[0, visual.rotationY, 0]} scale={visual.scale}>
     <Clone object={clone} />
   </group>;
 }

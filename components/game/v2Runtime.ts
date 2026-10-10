@@ -14,6 +14,8 @@ import type {
 import type { SuspectRecoveryMode } from "@/lib/gameRules";
 import { makeSupportAI, type SupportAIState } from "@/lib/supportUnitAI";
 import { makeBlockade, type BlockadeState } from "@/lib/supportContainment";
+import { evaluatePitRisk, missionPitRisk } from "@/lib/pitPolicy";
+import type { ContactFeedback } from "@/lib/pitContact";
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -24,6 +26,7 @@ export interface PitCandidate {
   side: -1 | 1;
   authorized: boolean;
   quality: number;
+  contactTime: number;
 }
 
 export interface SupportUnitSnapshot extends CarSnapshot {
@@ -50,6 +53,11 @@ export interface V2Runtime {
   playerDamage: VehicleDamage;
   authorization: PitAuthorization;
   authorizationReason: string;
+  authorizationRequested: boolean;
+  authorizationCheckedAt: number;
+  authorizationExpires: number;
+  contactFeedback: ContactFeedback | null;
+  heldFor: number;
   command: RadioCommand | null;
   tacticalCommand: RadioCommand | null;
   commandAt: number;
@@ -92,6 +100,11 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     playerDamage: pristineDamage(),
     authorization: "unknown",
     authorizationReason: "按住 Q，選擇「請求 PIT 授權」",
+    authorizationRequested: false,
+    authorizationCheckedAt: -1,
+    authorizationExpires: 0,
+    contactFeedback: null,
+    heldFor: 0,
     command: null,
     tacticalCommand: null,
     commandAt: 0,
@@ -112,6 +125,21 @@ export function logRuntimeEvent(runtime: V2Runtime, message: string) {
   if (runtime.eventLog[0] === message) return;
   runtime.eventLog.unshift(message);
   runtime.eventLog.splice(60);
+}
+
+export function refreshPitAuthorization(runtime: V2Runtime, config: MissionConfig, suspect = runtime.suspect, force = false) {
+  if (!runtime.authorizationRequested || (!force && runtime.elapsed - runtime.authorizationCheckedAt < .25)) return;
+  const segment = runtime.road.segments[runtime.suspectRoadIndex];
+  const supportUnits = runtime.supports.filter(c => Math.hypot(c.x - suspect.x, c.z - suspect.z) < 150).length;
+  const decision = evaluatePitRisk(missionPitRisk(config, segment, suspect, supportUnits));
+  const reason = decision.reasons.join("、");
+  if (runtime.authorization !== decision.authorization || runtime.authorizationReason !== reason) {
+    logRuntimeEvent(runtime, `授權更新：${decision.authorization.toUpperCase()} — ${reason}`);
+  }
+  runtime.authorization = decision.authorization;
+  runtime.authorizationReason = reason;
+  runtime.authorizationCheckedAt = runtime.elapsed;
+  runtime.authorizationExpires = runtime.elapsed + .5;
 }
 
 export function updateRadioFeedback(runtime: V2Runtime, feedback: Omit<RadioFeedback, "at">) {

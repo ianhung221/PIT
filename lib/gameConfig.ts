@@ -21,12 +21,29 @@ export const WEATHER = {
 } as const;
 
 export const VEHICLES = {
-  patrol: { label: "巡邏轎車", acceleration: 16, maxSpeed: 43, steering: 1.8, mass: 1.05, width: 2.05, height: .65, length: 4.45, color: "#e8ecee" },
-  interceptor: { label: "攔截跑車", acceleration: 20, maxSpeed: 52, steering: 2.05, mass: .9, width: 1.95, height: .55, length: 4.5, color: "#f1f2ed" },
-  suv: { label: "警用 SUV", acceleration: 13, maxSpeed: 39, steering: 1.45, mass: 1.35, width: 2.15, height: .78, length: 4.6, color: "#d9dfe0" },
+  patrol: { label: "巡邏轎車", acceleration: 16, maxSpeed: 43, steering: 1.8, mass: 1.05, width: 2.025, height: .65, length: 4.712, color: "#e8ecee" },
+  interceptor: { label: "攔截跑車", acceleration: 20, maxSpeed: 52, steering: 2.05, mass: .9, width: 2.106, height: .55, length: 4.5052, color: "#f1f2ed" },
+  suv: { label: "警用 SUV", acceleration: 13, maxSpeed: 39, steering: 1.45, mass: 1.35, width: 2.145, height: .78, length: 4.59, color: "#d9dfe0" },
 } as const;
 
-export const SUSPECT = { mass: 1, width: 2, height: .62, length: 4.4, color: "#8d261b" } as const;
+export const SUSPECT = { mass: 1, width: 1.95, height: .62, length: 4.386, color: "#8d261b" } as const;
+
+// Measured transformed GLB body/wheels; tiny roof accessories are not colliders.
+// Equal strip masses keep the original total mass and planar center of mass.
+export const VEHICLE_PROFILES = {
+  patrol: { positionZ: 0, widths: [2.025, 1.755, 1.755] },
+  interceptor: { positionZ: 0, widths: [2.106, 2.106, 2.106] },
+  suv: { positionZ: .135, widths: [2.145, 2.145, 1.859] },
+  suspect: { positionZ: -.043, widths: [1.95, 1.95, 1.95] },
+} as const;
+
+export function vehicleColliderStrips(kind: VehicleId | "suspect") {
+  const spec = kind === "suspect" ? SUSPECT : VEHICLES[kind];
+  return VEHICLE_PROFILES[kind].widths.map((width, i) => ({
+    halfWidth: width / 2, halfLength: spec.length / 6,
+    z: (i - 1) * spec.length / 3, mass: spec.mass / 3,
+  }));
+}
 
 export const VEHICLE_VISUALS = {
   patrol: { scale: [1.35, 1, 1.52] as [number, number, number], rotationY: Math.PI, positionY: -.18 },

@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+.contact-feedback { position:absolute; left:50%; bottom:140px; transform:translateX(-50%); max-width:min(680px,90vw); padding:12px 18px; background:rgba(10,18,22,.92); border-left:3px solid #e9ad52; color:#edf5f6; font-size:13px; pointer-events:none; z-index:12; }
+.contact-feedback--effective { border-color:#72d4a4; }
+.contact-feedback--unsafe, .contact-feedback--excessive { border-color:#ff7139; }
+
 :root { --ink: #e9eef1; --muted: #8d999f; --orange: #ff4d14; --panel: rgba(9, 14, 17, .91); }
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; background: #050708; color: var(--ink); font-family: "Arial Narrow", "Noto Sans TC", Arial, sans-serif; }
