@@ -16,13 +16,14 @@ import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEA
 import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } from "@/lib/pursuitCoordinator";
 import { vehicleDriveability } from "@/lib/vehicleDamage";
 import { makeBlockade } from "@/lib/supportContainment";
+import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
 
 const CAMERA_ORDER: CameraMode[] = ["chase", "driver", "auto"];
 const OUTCOME_COPY: Record<MissionOutcome, { eyebrow: string; title: string; detail: string }> = {
   playing: { eyebrow: "PURSUIT ACTIVE", title: "追捕進行中", detail: "維持主追位置並等待安全 PIT 條件。" },
-  contained: { eyebrow: "VEHICLE CONTAINED", title: "包圍成功", detail: "後援單位已封鎖嫌犯車頭與後方，嫌犯無法繼續逃逸。" },
-  disabled: { eyebrow: "VEHICLE DISABLED", title: "車輛失能", detail: "有效 PIT 與碰撞損傷使嫌犯車失去安全行駛能力。" },
+  contained: { eyebrow: "VEHICLE CONTAINED", title: "攔停成功", detail: "車輛與實體護欄已形成穩定封鎖。攔停結果與 PIT 操作品質分開評估。" },
+  disabled: { eyebrow: "VEHICLE DISABLED", title: "失能停下", detail: "嫌犯車已無法繼續駕駛並穩定停下；不代表 PIT 操作合格。" },
   "stopped-mobile": { eyebrow: "TEMPORARY STOP", title: "暫時停車", detail: "嫌犯車仍可駕駛，後援必須完成包圍。" },
   recovered: { eyebrow: "RECOVERED", title: "恢復追捕", detail: "嫌犯已從碰撞中恢復並繼續逃逸。" },
   "escaped-containment": { eyebrow: "CONTAINMENT FAILED", title: "包圍失敗", detail: "嫌犯車仍可行駛並突破封鎖。" },
@@ -96,6 +97,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     contactFeedback: null,
     authorizationExpires: 0,
     missionStage: "playing",
+    control: initialControl(),
+    heldFor: 0,
     speed: 0,
     distance: 32,
     targetBearing: 0,
@@ -180,6 +183,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       contactFeedback: null,
       authorizationExpires: 0,
       missionStage: "playing",
+      control: initialControl(),
+      heldFor: 0,
       speed: 0,
       distance: 32,
       targetBearing: 0,
@@ -263,6 +268,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       <i>嫌犯可駕駛度 {Math.round(hud.suspectDriveability * 100)}%</i>
       {hud.missionStage === "stopped-mobile" && <span>有效 PIT 已確認 · 尚待完成控制</span>}
       {hud.missionStage === "escaped-containment" && <span>嫌犯再次逃逸 · 保持追蹤</span>}
+      <span className="control-reason">攔停：{hud.control.reason}{hud.heldFor > 0 ? `（${Math.min(100, Math.round(hud.heldFor / CONTROL.hold * 100))}%）` : ""}</span>
     </section>
     <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>
     {cameraMode === "auto" && hud.distance > CAMERA_SETTINGS.helicopterFocusDistance && <div
@@ -282,6 +288,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         <span>未授權／不安全 <b>{debrief.unsafeContacts}</b></span><span>嫌犯車況 <b>{Math.round(debrief.suspectDriveability * 100)}%</b></span>
       </div>}
       {result !== "paused" && <ol className="debrief-log">{debrief.events.map((event, index) => <li key={event + "-" + index}>{event}</li>)}</ol>}
+      {result !== "paused" && <p className="pit-grade">PIT 評估：{debrief.successfulContacts > 0 ? "已記錄合格 PIT" : "未完成合格 PIT"}{debrief.unsafeContacts > 0 ? "；另有未授權／不安全接觸，攔停成功不抵銷違規" : ""}。</p>}
       <div className="debrief-actions">
         {result === "paused" ? <button onClick={togglePause}>繼續任務</button> : <button onClick={restart}>相同地圖再試一次</button>}
         <button className="secondary" onClick={onExit}>返回設定</button>

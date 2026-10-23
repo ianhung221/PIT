@@ -63,12 +63,13 @@ test("containment rejects close but off-axis, rotating, moving or overlapping un
   assert.equal(containmentPose(0,front,{...suspect,lateralSpeed:3},0),false);
 });
 test("a PIT is distinct from mission victory, disabled targets must actually slow and hold needs stable time", () => {
-  assert.equal(pitMissionResolution(false,false,0,10,2),null);
-  assert.equal(pitMissionResolution(true,true,0,10,0),null);
-  assert.equal(pitMissionResolution(true,true,0,10,.7),null);
-  assert.equal(pitMissionResolution(true,true,0,10,.9),"contained");
-  assert.equal(pitMissionResolution(true,false,15,2,0),null);
-  assert.equal(pitMissionResolution(true,false,0,2,0),"disabled");
+  // V2 control repair intentionally removes the former qualified-PIT prerequisite.
+  assert.equal(pitMissionResolution(true,0,0,0),null);
+  assert.equal(pitMissionResolution(true,0,0,.7),null);
+  assert.equal(pitMissionResolution(true,0,0,1.3),"contained");
+  assert.equal(pitMissionResolution(false,15,2,0),null);
+  assert.equal(pitMissionResolution(false,0,2,0),"disabled");
+  assert.equal(pitMissionResolution(false,0,0,0),null);
 });
 test("Rapier compound bodies collide at visible surfaces, supply real points and stay inside walls for all models", async () => {
   await RAPIER.init();

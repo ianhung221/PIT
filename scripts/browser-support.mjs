@@ -17,6 +17,7 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
     console.log("support: radio", n, await evaluate(`({ tactical:window.__pitInspect().runtime.tacticalCommand, message:document.querySelector('.radio-feedback')?.textContent ?? window.__pitInspect().runtime.radioFeedback?.message, roles:document.querySelector('.hud-units').textContent })`));
   };
   await evaluate(`window.__placeSupportFixture = (kind, preserveCommand=false) => {
+    window.__restoreSupportTarget?.();
     const { runtime:s, bodies } = window.__pitInspect();
     const place = (body, snapshot, index, side, longitudinal, yawOffset=0, speed=0) => {
       const seg=s.road.segments[index], yaw=seg.yaw+yawOffset;
@@ -39,16 +40,22 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
       place(bodies[0],s.player,0,-3,0); place(bodies[1],s.suspect,2,0,0);
       place(bodies[2],s.supports[0],1,3,24); place(bodies[3],s.supports[1],1,-3,7);
       s.playerRoadIndex=0;s.suspectRoadIndex=2;s.supportRoadIndices=[1,1];
-      s.suspectDamage.engine=.05;s.suspectDamage.steering=.05;
     } else if(kind==='slow') {
       place(bodies[0],s.player,1,-3,-45); place(bodies[1],s.suspect,1,0,0);
       place(bodies[2],s.supports[0],1,3,-18); place(bodies[3],s.supports[1],1,-2,-32);
       s.playerRoadIndex=1;s.suspectRoadIndex=1;s.supportRoadIndices=[1,1];
-      s.suspectDamage.engine=.05;s.suspectDamage.steering=.05;
     } else {
       place(bodies[0],s.player,0,-3,0); place(bodies[1],s.suspect,4,0,0,0,30);
       place(bodies[2],s.supports[0],1,2,0,0,24); place(bodies[3],s.supports[1],1,-2,-18,0,24);
       s.playerRoadIndex=3;s.suspectRoadIndex=4;s.supportRoadIndices=[1,1];
+    }
+    if(kind==='formation'||kind==='slow') {
+      // Isolate support navigation with a parked, driveable target. A destroyed
+      // engine now correctly ends the mission without a PIT prerequisite.
+      const body=bodies[1],impulse=body.applyImpulse,angular=body.setAngvel;
+      body.lockTranslations(true,true);body.lockRotations(true,true);
+      body.applyImpulse=()=>{};body.setAngvel=()=>{};
+      window.__restoreSupportTarget=()=>{body.applyImpulse=impulse;body.setAngvel=angular;body.setEnabledTranslations(true,false,true,true);body.setEnabledRotations(false,true,false,true);window.__restoreSupportTarget=null;};
     }
     s.supportAi.forEach((ai,i)=>Object.assign(ai,{mode:'driving',modeElapsed:0,stalledFor:0,lastX:s.supports[i].x,lastZ:s.supports[i].z}));
     s.supportArrivedFor=[0,0];
@@ -97,7 +104,7 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
   console.log("support: physical blockade",positions);
   await radio(1);
   if(await evaluate(`window.__pitInspect().runtime.tacticalCommand!=='block-front'`)) throw new Error("Q1 canceled Q4");
-  await evaluate(`(() => { const {runtime:s,bodies}=window.__pitInspect(); const yaw=s.road.segments[s.suspectRoadIndex].yaw; s.suspectDamage.engine=1;s.suspectDamage.steering=1; bodies[1].setLinvel({x:-Math.sin(yaw)*24,y:0,z:-Math.cos(yaw)*24},true); })()`);
+  await evaluate(`(() => { window.__restoreSupportTarget?.(); const {runtime:s,bodies}=window.__pitInspect(); const yaw=s.road.segments[s.suspectRoadIndex].yaw; bodies[1].setLinvel({x:-Math.sin(yaw)*24,y:0,z:-Math.cos(yaw)*24},true); })()`);
   await waitFor(`window.__pitInspect().runtime.blockade.phase==='missed'`, "blockade-escape");
   if(await evaluate(`window.__pitInspect().runtime.tacticalCommand!=='block-front'`)) throw new Error("Escape discarded Q4 standby");
   await capture("support-blockade-missed");

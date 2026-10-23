@@ -1,5 +1,6 @@
 import type { CarSnapshot } from "../types/game.ts";
 import { normalizeAngle, evaluatePitOutcome } from "./gameRules.ts";
+import { CONTROL } from "./vehicleControlAssessment.ts";
 
 export const V2_PIT = { rearStart: .5, maxAngle: Math.PI * 35 / 180, minNormalSpeed: .35, maxClosingSpeed: 12, minContactTime: 1 / 60, window: 2.5 } as const;
 export interface PhysicalContact {
@@ -35,9 +36,9 @@ export function physicalPitOutcome(startYaw: number, yaw: number, startPlanarSpe
   return { ...result, progress: success ? 100 : Math.min(99, result.progress), success };
 }
 
-export function pitMissionResolution(qualified: boolean, driveable: boolean, planarSpeed: number, elapsed: number, heldFor: number): "disabled" | "contained" | null {
-  if (!qualified) return null;
-  if (!driveable && planarSpeed < 1.2 && elapsed > 1.2) return "disabled";
-  if (heldFor > .8) return "contained";
+export function pitMissionResolution(driveable: boolean, planarSpeed: number, disabledFor: number, heldFor: number): "disabled" | "contained" | null {
+  // Mission control is independent from the historical PIT quality assessment.
+  if (!driveable && planarSpeed < CONTROL.speed && disabledFor >= CONTROL.disabledHold) return "disabled";
+  if (planarSpeed < CONTROL.speed && heldFor >= CONTROL.hold) return "contained";
   return null;
 }

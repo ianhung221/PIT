@@ -38,7 +38,9 @@ import { suspectRoadCruise } from "@/lib/pitPolicy";
 import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
 import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
 import { driveSupport } from "@/lib/supportDriving";
-import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade, containmentPose } from "@/lib/supportContainment";
+import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade } from "@/lib/supportContainment";
+import { roadSections } from "@/lib/roadGeometry";
+import { assessVehicleControl, advanceControlTimers, controlRoadGeometry, CONTROL, type ControlAssessment } from "@/lib/vehicleControlAssessment";
 import { applyImpactDamage, vehicleCanContinue, vehicleDriveability } from "@/lib/vehicleDamage";
 import type { MissionOutcome, RadioFeedback, RadioCommand } from "@/types/game";
 import type { PitAuthorization } from "@/types/game";
@@ -72,6 +74,8 @@ export interface V2HudData {
   contactFeedback: ContactFeedback | null;
   authorizationExpires: number;
   missionStage: MissionOutcome;
+  control: ControlAssessment;
+  heldFor: number;
 }
 
 interface FinishData {
@@ -93,6 +97,7 @@ function desiredYawTo(fromX: number, fromZ: number, targetX: number, targetZ: nu
 }
 
 export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdate, onFinish }: SimulationProps) {
+  const controlGeometryRef = useRef<ReturnType<typeof controlRoadGeometry> | null>(null);
   const playerRef = useRef<RapierRigidBody>(null);
   const suspectRef = useRef<RapierRigidBody>(null);
   const support2Ref = useRef<RapierRigidBody>(null);
@@ -235,6 +240,12 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const support3 = support3Ref.current;
     const state = runtime.current;
     if (!player || !suspect || !support2 || !support3 || state.result !== "playing") return;
+    // Observe the previous solved physics step, before controllers write their
+    // desired velocities. A blocked steering command is not actual rotation.
+    const measuredCars = [player, suspect, support2, support3].map(body => {
+      const p = body.translation(), f = bodyFrame(body);
+      return { x:p.x, z:p.z, yaw:f.yaw, speed:f.forwardSpeed, lateralSpeed:f.lateralSpeed, angularSpeed:body.angvel().y };
+    });
     const dt = world.timestep;
     state.elapsed += dt;
     state.collisionCooldown = Math.max(0, state.collisionCooldown - dt);
@@ -431,18 +442,28 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
 
     const support2Position = support2.translation();
     const support3Position = support3.translation();
-    const currentSupport = (body: RapierRigidBody) => {
-      const p = body.translation(), f = bodyFrame(body);
-      return {x:p.x,z:p.z,yaw:f.yaw,speed:f.forwardSpeed,lateralSpeed:f.lateralSpeed};
-    };
     const frontDistance = Math.hypot(support2Position.x - suspectPosition.x, support2Position.z - suspectPosition.z);
     const rearDistance = Math.hypot(support3Position.x - suspectPosition.x, support3Position.z - suspectPosition.z);
-    const roadYaw = state.blockade.anchor?.yaw ?? segment.yaw;
-    const held = containmentPose(0, currentSupport(support2), currentSuspect, roadYaw) && containmentPose(1, currentSupport(support3), currentSuspect, roadYaw);
-    state.heldFor = state.pitQualified && held ? state.heldFor + dt : 0;
-    const resolution = pitMissionResolution(state.pitQualified, suspectCanDrive, planarSuspectSpeed, state.containmentElapsed, state.heldFor);
+    const searchDue = state.elapsed - state.controlCheckedAt >= CONTROL.interval;
+    const controlGeometry = controlGeometryRef.current ??= controlRoadGeometry(roadSections(state.road));
+    const control = assessVehicleControl(
+      { ...measuredCars[1], model: "suspect" },
+      [
+        { ...measuredCars[0], model: config.vehicle },
+        { ...measuredCars[2], model: "patrol" },
+        { ...measuredCars[3], model: "suv" },
+      ],
+      controlGeometry.slice(Math.max(0, state.suspectRoadIndex - 1), state.suspectRoadIndex + 2),
+      searchDue ? CONTROL.maxNodes : 0,
+    );
+    // Cached escape text is display-only. The closure certificate and timers are
+    // recomputed every physics step, never carried over from a stale search.
+    if (searchDue || control.status !== "uncertain" || state.control.status !== "open") state.control = control;
+    if (searchDue) state.controlCheckedAt = state.elapsed;
+    Object.assign(state, advanceControlTimers(state, control, suspectCanDrive, planarSuspectSpeed, dt));
+    const resolution = pitMissionResolution(suspectCanDrive, planarSuspectSpeed, state.disabledFor, state.heldFor);
     if (resolution) {
-      logRuntimeEvent(state, resolution === "contained" ? "包圍確認：前後單位穩定守位" : "失能確認：合格 PIT 後嫌犯無法繼續駕駛");
+      logRuntimeEvent(state, resolution === "contained" ? "攔停確認：實體出口封閉並穩定維持；不限定玩家或後援位置" : "失能確認：嫌犯無法繼續駕駛且已穩定停下");
       finish("success", resolution);
       return;
     }
@@ -501,6 +522,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         contactFeedback: state.contactFeedback,
         authorizationExpires: state.authorizationExpires,
         missionStage: state.outcome,
+        control: state.control,
+        heldFor: state.heldFor,
       });
     }
   });

@@ -16,6 +16,7 @@ import { makeSupportAI, type SupportAIState } from "@/lib/supportUnitAI";
 import { makeBlockade, type BlockadeState } from "@/lib/supportContainment";
 import { evaluatePitRisk, missionPitRisk } from "@/lib/pitPolicy";
 import type { ContactFeedback } from "@/lib/pitContact";
+import { initialControl, type ControlAssessment } from "@/lib/vehicleControlAssessment";
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -58,6 +59,9 @@ export interface V2Runtime {
   authorizationExpires: number;
   contactFeedback: ContactFeedback | null;
   heldFor: number;
+  disabledFor: number;
+  control: ControlAssessment;
+  controlCheckedAt: number;
   command: RadioCommand | null;
   tacticalCommand: RadioCommand | null;
   commandAt: number;
@@ -105,6 +109,9 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     authorizationExpires: 0,
     contactFeedback: null,
     heldFor: 0,
+    disabledFor: 0,
+    control: initialControl(),
+    controlCheckedAt: -1,
     command: null,
     tacticalCommand: null,
     commandAt: 0,

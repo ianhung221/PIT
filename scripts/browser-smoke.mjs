@@ -6,6 +6,7 @@ import { verifySupportUnits } from "./browser-support.mjs";
 import { verifyDebrief } from "./browser-debrief.mjs";
 import { verifyPitSupport } from "./browser-pit-support.mjs";
 import { verifyPitPolicy } from "./browser-pit-policy.mjs";
+import { verifyControl } from "./browser-control.mjs";
 import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
@@ -170,7 +171,12 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (process.env.PIT_TEST_POLICY === "true") {
+  if (process.env.PIT_TEST_CONTROL === "true") {
+    if (!worldCheck) throw new Error("PIT_TEST_CONTROL requires PIT_TEST_WORLD=true");
+    await verifyControl({ evaluate, delay, capture });
+    if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
+    console.log("control: browser fixtures passed", url);
+  } else if (process.env.PIT_TEST_POLICY === "true") {
     if (!worldCheck) throw new Error("PIT_TEST_POLICY requires PIT_TEST_WORLD=true");
     await verifyPitPolicy({ evaluate, delay });
     if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors, ...failedRequests].join("; ")}`);
