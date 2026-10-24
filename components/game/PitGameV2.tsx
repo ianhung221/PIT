@@ -17,6 +17,7 @@ import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } f
 import { vehicleDriveability } from "@/lib/vehicleDamage";
 import { makeBlockade } from "@/lib/supportContainment";
 import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
+import { makePlayerDriving, resetPlayerDriving } from "@/lib/playerDriving";
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
 
 const CAMERA_ORDER: CameraMode[] = ["chase", "driver", "auto"];
@@ -32,15 +33,22 @@ const OUTCOME_COPY: Record<MissionOutcome, { eyebrow: string; title: string; det
   paused: { eyebrow: "OPERATION PAUSED", title: "任務暫停", detail: "準備好後繼續追逐。" },
 };
 
-function useControls(onCamera: () => void, onPause: () => void) {
+function useControls(onCamera: () => void, onPause: () => void, runtime: React.MutableRefObject<V2Runtime>) {
   const keys = useRef(new Set<string>());
   useEffect(() => {
-    const clear = () => keys.current.clear();
+    const clear = () => { keys.current.clear(); resetPlayerDriving(runtime.current.driving,"視窗失去焦點"); };
     const down = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(event.key)) event.preventDefault();
       const key = event.key.toLowerCase();
       if (!event.repeat && key === "c") onCamera();
-      if (!event.repeat && (key === "escape" || key === "p")) onPause();
+      if (!event.repeat && (key === "escape" || key === "p")) { keys.current.clear(); onPause(); return; }
+      if (runtime.current.result !== "playing") return;
+      if (["f","[","]"].includes(key)) {
+        event.preventDefault();
+        if (!event.repeat) runtime.current.driving.commands.push(key==="f"?"toggle":key==="["?"down":"up");
+        return;
+      }
+      if (event.repeat && !keys.current.has(key)) return;
       keys.current.add(key);
     };
     const up = (event: KeyboardEvent) => keys.current.delete(event.key.toLowerCase());
@@ -55,7 +63,7 @@ function useControls(onCamera: () => void, onPause: () => void) {
       window.removeEventListener("blur", clear);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [onCamera, onPause]);
+  }, [onCamera, onPause, runtime]);
   return keys;
 }
 
@@ -80,7 +88,7 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
     </Physics>
     <V2Weather config={config} runtime={runtime} />
     <CameraRig runtime={runtime} mode={cameraMode} keys={keys} />
-    <CockpitView mode={cameraMode} steering={keys} />
+    <CockpitView mode={cameraMode} steering={keys} runtime={runtime} />
     <VehicleMirrors runtime={runtime} mode={cameraMode} quality={config.quality} />
   </>;
 }
@@ -92,6 +100,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   const [result, setResult] = useState<V2Result>("playing");
   const [outcome, setOutcome] = useState<MissionOutcome>("playing");
   const [hud, setHud] = useState<V2HudData>(() => ({
+    driving: makePlayerDriving(),
     radioFeedback: null,
     tacticalCommand: null,
     contactFeedback: null,
@@ -120,10 +129,14 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     if (current === "success" || current === "failed") return current;
     const next = current === "paused" ? "playing" : "paused";
     runtime.current.result = next;
+    resetPlayerDriving(runtime.current.driving,"暫停／繼續任務");
     runtime.current.outcome = next === "paused" ? "paused" : "playing";
     return next;
   }), []);
-  const keys = useControls(cycleCamera, togglePause);
+  const keys = useControls(cycleCamera, togglePause, runtime);
+  useEffect(() => {
+    if (result !== "playing") { keys.current.clear(); resetPlayerDriving(runtime.current.driving,"任務暫停或結束"); }
+  }, [result, keys]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTime(Math.max(0, 90 - runtime.current.elapsed)), 100);
@@ -178,6 +191,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     keys.current.clear();
     runtime.current = makeV2Runtime(config);
     setHud({
+      driving: makePlayerDriving(),
       radioFeedback: null,
       tacticalCommand: null,
       contactFeedback: null,
@@ -250,6 +264,13 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <section className="hud-speed">
       <span>{Math.round(hud.speed * 3.6)}</span><small>KM/H</small>
       <i style={{ "--speed": Math.min(100, hud.speed / VEHICLES[config.vehicle].maxSpeed * 100) + "%" } as React.CSSProperties} />
+      {result === "playing" && <div className="driving-controls">
+        <div>油門 {Math.round(hud.driving.throttle*100)}% · {hud.driving.cruise ? `巡航 ${Math.round(hud.driving.target)} km/h` : "巡航關閉"}</div>
+        <button onClick={() => runtime.current.driving.commands.push("toggle")} aria-pressed={hud.driving.cruise}>F 巡航</button>
+        <button disabled={!hud.driving.cruise} onClick={() => runtime.current.driving.commands.push("down")} aria-label="降低巡航速度">[ −5</button>
+        <button disabled={!hud.driving.cruise} onClick={() => runtime.current.driving.commands.push("up")} aria-label="提高巡航速度">] +5</button>
+        <div className="driving-reason">{hud.driving.reason}</div>
+      </div>}
     </section>
     <section className="hud-timer"><small>TIME REMAINING</small><strong>{Math.floor(time / 60).toString().padStart(2, "0")}:{Math.floor(time % 60).toString().padStart(2, "0")}</strong></section>
     <section className="hud-target">

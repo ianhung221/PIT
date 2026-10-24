@@ -5,10 +5,12 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import type { CameraMode } from "@/lib/gameConfig";
+import type { V2Runtime } from "@/components/game/v2Runtime";
 
-export function CockpitView({ mode, steering }: {
+export function CockpitView({ mode, steering, runtime }: {
   mode: CameraMode;
   steering: MutableRefObject<Set<string>>;
+  runtime?: MutableRefObject<V2Runtime>;
 }) {
   const { camera } = useThree();
   const group = useRef<THREE.Group>(null);
@@ -19,9 +21,9 @@ export function CockpitView({ mode, steering }: {
     group.current.position.copy(camera.position);
     group.current.quaternion.copy(camera.quaternion);
     if (wheel.current) {
-      const left = steering.current.has("arrowleft") || steering.current.has("a");
-      const right = steering.current.has("arrowright") || steering.current.has("d");
-      wheel.current.rotation.z = ((left ? 1 : 0) - (right ? 1 : 0)) * .55;
+      const input = runtime ? runtime.current.driving.steering :
+        Number(steering.current.has("arrowright") || steering.current.has("d")) - Number(steering.current.has("arrowleft") || steering.current.has("a"));
+      wheel.current.rotation.z = -input * .55;
     }
   });
   return <group ref={group} visible={false} name="cockpit-view">

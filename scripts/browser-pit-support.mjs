@@ -27,9 +27,11 @@ export async function verifyPitSupport({ evaluate, command, delay, capture }) {
     s.elapsed=0;s.commandAt=0;s.collisionCooldown=0;
   })()`);
   if (mode !== "unauthorized" && !await evaluate(`window.__pitInspect().runtime.authorizationRequested`)) throw new Error("Q1 did not register continuous authorization request");
+  await evaluate(`document.querySelector('.debrief-actions button').click()`);
+  await delay(100);
+  // Pause now clears input by design; send fresh keys only after resuming.
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft" });
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowUp", code: "ArrowUp" });
-  await evaluate(`document.querySelector('.debrief-actions button').click()`);
   await delay(1800);
   await command("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft" });
   await command("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowUp", code: "ArrowUp" });

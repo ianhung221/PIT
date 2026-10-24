@@ -1,4 +1,5 @@
 import { generateRoad } from "@/lib/proceduralMap";
+import { makePlayerDriving, type PlayerDriving } from "@/lib/playerDriving";
 import { pristineDamage } from "@/lib/vehicleDamage";
 import { SCENES, type MissionConfig } from "@/lib/gameConfig";
 import type {
@@ -36,6 +37,7 @@ export interface SupportUnitSnapshot extends CarSnapshot {
 }
 
 export interface V2Runtime {
+  driving: PlayerDriving;
   player: CarSnapshot;
   suspect: CarSnapshot;
   supports: [SupportUnitSnapshot, SupportUnitSnapshot];
@@ -83,6 +85,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
   const seed = config.seed?.trim() || "PIT-TRAINING";
   const initialSpeed = SCENES[config.scene].aiSpeed * .72;
   return {
+    driving: makePlayerDriving(),
     player: snapshot(0, 8),
     suspect: snapshot(.8, -24, initialSpeed),
     supports: [

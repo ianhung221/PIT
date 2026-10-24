@@ -12,6 +12,7 @@ import {
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { VehicleModel } from "@/components/game/VehicleModel";
+import { stepPlayerDriving, playerTurnRate, resetPlayerDriving, cancelCruise, type PlayerDriving } from "@/lib/playerDriving";
 import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
 import { logRuntimeEvent, updateRadioFeedback, refreshPitAuthorization } from "@/components/game/v2Runtime";
 import {
@@ -58,6 +59,7 @@ type BodyFrame = {
 };
 
 export interface V2HudData {
+  driving: PlayerDriving;
   speed: number;
   distance: number;
   targetBearing: number;
@@ -138,6 +140,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const state = runtime.current;
     if (state.result !== "playing") return;
     state.result = result;
+    resetPlayerDriving(state.driving, "任務結束");
+    keys.current.clear();
     state.outcome = outcome;
     onFinish({ result, outcome });
   };
@@ -222,6 +226,12 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const player = playerRef.current, suspect = suspectRef.current;
     if (!player || !suspect || runtime.current.result !== "playing") return;
     const touching = new Set<string>();
+    let solidContact = false;
+    for (let i=0;i<player.numColliders();i++) world.contactPairsWith(player.collider(i), other => {
+      world.contactPair(player.collider(i), other, manifold => { if (manifold.numSolverContacts()>0) solidContact=true; });
+    });
+    runtime.current.driving.touching=solidContact;
+    if (solidContact) cancelCruise(runtime.current.driving,"碰撞／接觸障礙");
     for (let i = 0; i < player.numColliders(); i++) for (let j = 0; j < suspect.numColliders(); j++) {
       const key = `${i}:${j}`;
       world.contactPair(player.collider(i), suspect.collider(j), manifold => {
@@ -258,8 +268,11 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const steer = steeringInput(keys.current.has("arrowleft") || keys.current.has("a"), keys.current.has("arrowright") || keys.current.has("d"));
     const playerDriveability = vehicleDriveability(state.playerDamage);
     const playerMass = player.mass();
-    if (throttle) {
-      const force = playerSpec.acceleration * grip * (.42 + playerDriveability * .58);
+    const acceleration = playerSpec.acceleration * grip * (.42 + playerDriveability * .58);
+    stepPlayerDriving(state.driving, {throttle,brake,steer}, playerFrame.forwardSpeed,
+      playerSpec.maxSpeed * (.52 + state.playerDamage.engine * .48), acceleration, vehicleCanContinue(state.playerDamage), dt);
+    if (state.driving.throttle > 0) {
+      const force = acceleration * state.driving.throttle;
       player.applyImpulse({ x: playerFrame.forwardX * playerMass * force * dt, y: 0, z: playerFrame.forwardZ * playerMass * force * dt }, true);
     }
     if (brake) {
@@ -269,9 +282,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const lateralCorrection = -playerFrame.lateralSpeed * playerMass * Math.min(1, grip * 8 * dt * (.45 + state.playerDamage.alignment * .55));
     player.applyImpulse({ x: playerFrame.rightX * lateralCorrection, y: 0, z: playerFrame.rightZ * lateralCorrection }, true);
     player.applyImpulse({ x: -playerFrame.velocityX * playerMass * .12 * dt, y: 0, z: -playerFrame.velocityZ * playerMass * .12 * dt }, true);
-    const speedFactor = THREE.MathUtils.clamp(Math.abs(playerFrame.forwardSpeed) / 13, .12, 1);
     const steeringHealth = state.playerDamage.steering * state.playerDamage.alignment;
-    const desiredTurn = -steer * playerSpec.steering * grip * speedFactor * steeringHealth * (playerFrame.forwardSpeed >= 0 ? 1 : -1);
+    const desiredTurn = playerTurnRate(state.driving.steering, playerFrame.forwardSpeed, playerSpec.steering * grip * steeringHealth);
     const playerAngular = player.angvel();
     player.setAngvel({ x: 0, y: THREE.MathUtils.lerp(playerAngular.y, desiredTurn, Math.min(1, dt * 8)), z: 0 }, true);
     const velocityAfter = player.linvel();
@@ -503,6 +515,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     if (lastUi.current >= .1) {
       lastUi.current = 0;
       onUpdate({
+        driving: {...state.driving, commands:[]},
         speed: Math.max(0, finalPlayerFrame.forwardSpeed),
         distance: Math.hypot(suspectPosition.x - playerPosition.x, suspectPosition.z - playerPosition.z),
         targetBearing: Math.atan2(
