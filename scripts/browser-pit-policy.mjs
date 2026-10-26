@@ -2,6 +2,9 @@
 export async function verifyPitPolicy({ evaluate, delay }) {
   await evaluate(`document.querySelector('.radio-trigger').click()`);
   await evaluate(`document.querySelectorAll('.radio-wheel>button')[0].click()`);
+  await delay(300);
+  const radioText=await evaluate(`document.querySelector('.radio-feedback').textContent`);
+  if(!radioText.includes('先前通訊')||!radioText.includes('目前狀態以左上授權為準')) throw new Error('Old authorization reply is not clearly marked as historical');
   const seen = new Set(); let safeAt = null;
   for (let i = 0; i < 180; i++) {
     await delay(500);

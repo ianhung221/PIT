@@ -18,6 +18,8 @@ import { vehicleDriveability } from "@/lib/vehicleDamage";
 import { makeBlockade } from "@/lib/supportContainment";
 import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
 import { makePlayerDriving, resetPlayerDriving } from "@/lib/playerDriving";
+import { PitDiagnosticPanel } from './PitDiagnosticPanel';
+import { makeDiagnostics } from '@/lib/pitDiagnostics';
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
 
 const CAMERA_ORDER: CameraMode[] = ["chase", "driver", "auto"];
@@ -96,6 +98,10 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
 export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: () => void }) {
   const runtime = useRef<V2Runtime>(makeV2Runtime(config));
   const [runId, setRunId] = useState(0);
+  const [diagnosticDetails,setDiagnosticDetails]=useState(false);
+  const [diagnostics,setDiagnostics]=useState(()=>makeDiagnostics('mission',JSON.stringify(config)));
+  const [summaryReason,setSummaryReason]=useState('');
+  const [showEvents,setShowEvents]=useState(false);
   const [cameraMode, setCameraMode] = useState<CameraMode>("chase");
   const [result, setResult] = useState<V2Result>("playing");
   const [outcome, setOutcome] = useState<MissionOutcome>("playing");
@@ -154,6 +160,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     if (command === "request-pit") {
       state.authorizationRequested = true;
       refreshPitAuthorization(state, config, state.suspect, true);
+      setHud(current=>({...current,authorizationExpires:state.authorizationExpires}));
       setPolicy({ authorization: state.authorization, reason: state.authorizationReason });
       updateRadioFeedback(state, { command, phase: "completed", message: `指揮中心已接收並完成評估：${state.authorization.toUpperCase()} — ${state.authorizationReason}` });
       setRadio(state.radioFeedback);
@@ -175,6 +182,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         events: [...state.eventLog],
       });
       setOutcome("failed");
+      setSummaryReason('本局由玩家終止。');
+      setDiagnostics(structuredClone(state.diagnostics));
       setResult("failed");
     } else {
       const labels: Record<Exclude<RadioCommand, "request-pit" | "terminate">, string> = {
@@ -212,6 +221,9 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       assignments: coordinatePursuit({ pitQualified: false, suspectStopped: false, suspectDriveable: true, playerDriveability: 1 }),
     });
     setTime(90);
+    setDiagnostics(makeDiagnostics('mission',JSON.stringify(config)));
+    setSummaryReason('');
+    setShowEvents(false);
     setRadio(null);
     setCameraMode("chase");
     setOutcome("playing");
@@ -221,7 +233,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     setRunId((value) => value + 1);
   };
 
-  const authorization = policy.authorization;
+  const authorization = policy.authorization==='authorized' && hud.authorizationExpires<90-time ? 'hold' : policy.authorization;
   const quality = QUALITY_SETTINGS[config.quality ?? "high"];
   const resultCopy = OUTCOME_COPY[result === "paused" ? "paused" : outcome];
   const policyClass = authorization === "authorized" ? "authorized" : authorization === "unknown" ? "unknown" : "restricted";
@@ -238,11 +250,14 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         paused={result !== "playing"}
         onUpdate={(data) => {
           setHud(data);
+          setDiagnostics(structuredClone(runtime.current.diagnostics));
           setRadio(data.radioFeedback);
           setPolicy({ authorization: data.authorization, reason: data.authorizationReason });
         }}
         onFinish={(data) => {
           const state = runtime.current;
+          setDiagnostics(structuredClone(state.diagnostics));
+          setSummaryReason(data.outcome==='contained'?'已達穩定封鎖條件。':data.outcome==='disabled'?'車輛失能且穩定停下。':`時間結束時未完成攔停：${state.control.reason}。此項是最後量測狀態，不能單憑逾時判定操作錯誤。`);
           setDebrief({
             attempts: state.attempts,
             successfulContacts: state.successfulContacts,
@@ -275,10 +290,11 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <section className="hud-timer"><small>TIME REMAINING</small><strong>{Math.floor(time / 60).toString().padStart(2, "0")}:{Math.floor(time % 60).toString().padStart(2, "0")}</strong></section>
     <section className="hud-target">
       <small>TARGET / {hud.biome.toUpperCase()}</small><strong>{hud.distance.toFixed(1)} M</strong>
-      <div><i style={{ width: hud.pit + "%" }} /></div><span>PIT EFFECTIVENESS {Math.round(hud.pit)}%</span>
+      <PitDiagnosticPanel data={diagnostics} details={diagnosticDetails}/>
+      <label className="diagnostic-toggles"><input type="checkbox" checked={diagnosticDetails} onChange={e=>setDiagnosticDetails(e.target.checked)}/> 詳細量測</label>
     </section>
     <section className={"hud-policy " + policyClass}>
-      <small>PIT AUTHORIZATION</small><strong>{authorization.toUpperCase()}</strong><span>{policy.reason}</span>
+      <small>PIT AUTHORIZATION · 目前</small><strong>{authorization.toUpperCase()}</strong><span>{authorization!==policy.authorization?'授權已過期，等待重新評估':policy.reason}</span>
       {hud.authorizationExpires > 0 && <span>持續評估中 · 接觸時再次核對</span>}
     </section>
     <section className="hud-units">
@@ -301,14 +317,16 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <div className="game-controls"><kbd>↑</kbd> 加速 · <kbd>↓</kbd> 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · <kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電 · <kbd>P</kbd> 暫停</div>
     <RadioCommandWheel disabled={result !== "playing"} onCommand={handleRadio} />
     {result === "playing" && hud.contactFeedback && 90 - time - hud.contactFeedback.at < 4 && <div className={"contact-feedback contact-feedback--" + hud.contactFeedback.classification} role="status" aria-live="polite">{hud.contactFeedback.message}</div>}
-    {result === "playing" && <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && 90 - time - radio.at < 8 ? radio.message : ""}</div>}
+    {result === "playing" && <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && 90 - time - radio.at < 8 ? `先前通訊 ${radio.at.toFixed(1)}s：${radio.message}${radio.command==='request-pit'?'（目前狀態以左上授權為準）':''}` : ""}</div>}
     {result !== "playing" && <div className="result-overlay"><div className={"result-card result-card--" + result}>
       <span>{resultCopy.eyebrow}</span><h2>{resultCopy.title}</h2><p>{result === "failed" && debrief.successfulContacts > 0 ? "有效 PIT 已記錄，但未在時限內完成失能或包圍控制。" : resultCopy.detail}</p>
       {result !== "paused" && <div className="debrief-grid">
         <span>PIT 嘗試 <b>{debrief.attempts}</b></span><span>有效接觸 <b>{debrief.successfulContacts}</b></span>
         <span>未授權／不安全 <b>{debrief.unsafeContacts}</b></span><span>嫌犯車況 <b>{Math.round(debrief.suspectDriveability * 100)}%</b></span>
       </div>}
-      {result !== "paused" && <ol className="debrief-log">{debrief.events.map((event, index) => <li key={event + "-" + index}>{event}</li>)}</ol>}
+      {result !== 'paused'&&<div className="debrief-summary"><PitDiagnosticPanel data={diagnostics}/><p>{summaryReason}</p></div>}
+      {result !== 'paused'&&<button className="debrief-toggle secondary" aria-expanded={showEvents} onClick={()=>setShowEvents(v=>!v)}>{showEvents?'收合事件紀錄':'展開事件紀錄'}</button>}
+      {result !== "paused" && showEvents && <ol className="debrief-log">{debrief.events.map((event, index) => <li key={event + "-" + index}>{event}</li>)}</ol>}
       {result !== "paused" && <p className="pit-grade">PIT 評估：{debrief.successfulContacts > 0 ? "已記錄合格 PIT" : "未完成合格 PIT"}{debrief.unsafeContacts > 0 ? "；另有未授權／不安全接觸，攔停成功不抵銷違規" : ""}。</p>}
       <div className="debrief-actions">
         {result === "paused" ? <button onClick={togglePause}>繼續任務</button> : <button onClick={restart}>相同地圖再試一次</button>}

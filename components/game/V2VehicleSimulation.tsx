@@ -12,7 +12,9 @@ import {
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { VehicleModel } from "@/components/game/VehicleModel";
-import { stepPlayerDriving, playerTurnRate, resetPlayerDriving, cancelCruise, type PlayerDriving } from "@/lib/playerDriving";
+import { resetPlayerDriving, cancelCruise, type PlayerDriving } from "@/lib/playerDriving";
+import { applyPlayerForces } from "@/lib/playerVehicleForces";
+import { beginDiagnostic, outcomeSample, updateDiagnostic } from "@/lib/pitDiagnostics";
 import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
 import { logRuntimeEvent, updateRadioFeedback, refreshPitAuthorization } from "@/components/game/v2Runtime";
 import {
@@ -29,12 +31,11 @@ import {
   nextSuspectRecoveryMode,
   normalizeAngle,
   SUSPECT_RECOVERY,
-  steeringInput,
   suspectForwardSpeedScale,
   suspectReverseEscapeYaw,
 } from "@/lib/gameRules";
 import { closestRoadSegment, roadTarget } from "@/lib/proceduralMap";
-import { classifyPhysicalContact, localPoint, physicalPitOutcome, pitMissionResolution, V2_PIT, type ContactFeedback } from "@/lib/pitContact";
+import { localPoint, physicalPitOutcome, pitMissionResolution, V2_PIT, type ContactFeedback } from "@/lib/pitContact";
 import { suspectRoadCruise } from "@/lib/pitPolicy";
 import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
 import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
@@ -177,11 +178,11 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const dz = previous.player.velocityZ - previous.suspect.velocityZ;
     const closingSpeed = Math.hypot(dx, dz), normalSpeed = Math.max(0, dx * nx + dz * nz);
     refreshPitAuthorization(state, config, { ...state.suspect, speed: previous.suspect.forwardSpeed, lateralSpeed: previous.suspect.lateralSpeed }, true);
-    const assessment = classifyPhysicalContact({ localX:local.x, localZ:local.z, playerLocalX:playerLocal.x, playerLocalZ:playerLocal.z,
+    const assessment = beginDiagnostic(state.diagnostics, { localX:local.x, localZ:local.z, playerLocalX:playerLocal.x, playerLocalZ:playerLocal.z,
       normalSide:nx * suspectFrame.rightX + nz * suspectFrame.rightZ, closingSpeed, normalSpeed,
       headingDelta:normalizeAngle(previous.player.yaw - previous.suspect.yaw), halfWidth:SUSPECT.width/2, halfLength:SUSPECT.length/2,
       playerHalfLength:VEHICLES[config.vehicle].length/2,
-      authorized:state.authorization === "authorized" && state.authorizationExpires >= state.elapsed });
+      authorized:state.authorization === "authorized" && state.authorizationExpires >= state.elapsed }, state.elapsed);
     state.collisionCooldown = .5;
     const impact = Math.max(2, normalSpeed * 2);
     state.suspectDamage = applyImpactDamage(state.suspectDamage, {
@@ -260,39 +261,10 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     state.elapsed += dt;
     state.collisionCooldown = Math.max(0, state.collisionCooldown - dt);
     const grip = WEATHER[config.weather].grip;
-    const playerSpec = VEHICLES[config.vehicle];
     const playerFrame = bodyFrame(player);
     preImpact.current = { player: playerFrame, suspect: bodyFrame(suspect) };
-    const throttle = keys.current.has("arrowup") || keys.current.has("w");
-    const brake = keys.current.has("arrowdown") || keys.current.has("s");
-    const steer = steeringInput(keys.current.has("arrowleft") || keys.current.has("a"), keys.current.has("arrowright") || keys.current.has("d"));
     const playerDriveability = vehicleDriveability(state.playerDamage);
-    const playerMass = player.mass();
-    const acceleration = playerSpec.acceleration * grip * (.42 + playerDriveability * .58);
-    stepPlayerDriving(state.driving, {throttle,brake,steer}, playerFrame.forwardSpeed,
-      playerSpec.maxSpeed * (.52 + state.playerDamage.engine * .48), acceleration, vehicleCanContinue(state.playerDamage), dt);
-    if (state.driving.throttle > 0) {
-      const force = acceleration * state.driving.throttle;
-      player.applyImpulse({ x: playerFrame.forwardX * playerMass * force * dt, y: 0, z: playerFrame.forwardZ * playerMass * force * dt }, true);
-    }
-    if (brake) {
-      const braking = playerFrame.forwardSpeed > .8 ? -Math.min(playerFrame.forwardSpeed, 24 * grip * dt) : -7 * grip * dt;
-      player.applyImpulse({ x: playerFrame.forwardX * playerMass * braking, y: 0, z: playerFrame.forwardZ * playerMass * braking }, true);
-    }
-    const lateralCorrection = -playerFrame.lateralSpeed * playerMass * Math.min(1, grip * 8 * dt * (.45 + state.playerDamage.alignment * .55));
-    player.applyImpulse({ x: playerFrame.rightX * lateralCorrection, y: 0, z: playerFrame.rightZ * lateralCorrection }, true);
-    player.applyImpulse({ x: -playerFrame.velocityX * playerMass * .12 * dt, y: 0, z: -playerFrame.velocityZ * playerMass * .12 * dt }, true);
-    const steeringHealth = state.playerDamage.steering * state.playerDamage.alignment;
-    const desiredTurn = playerTurnRate(state.driving.steering, playerFrame.forwardSpeed, playerSpec.steering * grip * steeringHealth);
-    const playerAngular = player.angvel();
-    player.setAngvel({ x: 0, y: THREE.MathUtils.lerp(playerAngular.y, desiredTurn, Math.min(1, dt * 8)), z: 0 }, true);
-    const velocityAfter = player.linvel();
-    const playerLimit = playerSpec.maxSpeed * (.52 + state.playerDamage.engine * .48);
-    const playerPlanarSpeed = Math.hypot(velocityAfter.x, velocityAfter.z);
-    if (playerPlanarSpeed > playerLimit) {
-      const scale = playerLimit / playerPlanarSpeed;
-      player.setLinvel({ x: velocityAfter.x * scale, y: 0, z: velocityAfter.z * scale }, true);
-    }
+    applyPlayerForces(player,playerFrame,state.driving,state.playerDamage,keys.current,config.vehicle,grip,dt);
 
     const suspectPosition = suspect.translation();
     const suspectFrame = bodyFrame(suspect);
@@ -393,6 +365,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         state.pitCandidate.contactTime,
       );
       state.pit = outcome.progress;
+      updateDiagnostic(state.diagnostics, outcomeSample(state.pitCandidate.startYaw, suspectFrame.yaw,
+        state.pitCandidate.startSpeed, planarSuspectSpeed, suspectFrame.lateralSpeed,
+        state.pitCandidate.contactTime, state.pitCandidate.expires-state.elapsed), state.elapsed, state.elapsed>=state.pitCandidate.expires);
       if (outcome.success) {
         state.pitCandidate = null;
         state.pitQualified = true;

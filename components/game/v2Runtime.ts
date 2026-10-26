@@ -18,6 +18,7 @@ import { makeBlockade, type BlockadeState } from "@/lib/supportContainment";
 import { evaluatePitRisk, missionPitRisk } from "@/lib/pitPolicy";
 import type { ContactFeedback } from "@/lib/pitContact";
 import { initialControl, type ControlAssessment } from "@/lib/vehicleControlAssessment";
+import { makeDiagnostics, type PitDiagnostics } from "@/lib/pitDiagnostics";
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -37,6 +38,7 @@ export interface SupportUnitSnapshot extends CarSnapshot {
 }
 
 export interface V2Runtime {
+  diagnostics: PitDiagnostics;
   driving: PlayerDriving;
   player: CarSnapshot;
   suspect: CarSnapshot;
@@ -85,6 +87,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
   const seed = config.seed?.trim() || "PIT-TRAINING";
   const initialSpeed = SCENES[config.scene].aiSpeed * .72;
   return {
+    diagnostics: makeDiagnostics('mission', JSON.stringify(config)),
     driving: makePlayerDriving(),
     player: snapshot(0, 8),
     suspect: snapshot(.8, -24, initialSpeed),
@@ -132,8 +135,8 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
 }
 
 export function logRuntimeEvent(runtime: V2Runtime, message: string) {
-  if (runtime.eventLog[0] === message) return;
-  runtime.eventLog.unshift(message);
+  if (runtime.eventLog[0]?.replace(/^\[\d+\.\ds\] /,'') === message) return;
+  runtime.eventLog.unshift(`[${runtime.elapsed.toFixed(1)}s] ${message}`);
   runtime.eventLog.splice(60);
 }
 

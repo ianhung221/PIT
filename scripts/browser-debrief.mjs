@@ -41,6 +41,9 @@ export async function verifyDebrief({ evaluate, command, delay, capture }) {
   await evaluate(`document.querySelector('.radio-trigger').click()`);
   await evaluate(`document.querySelectorAll('.radio-wheel>button')[5].click()`);
   await delay(250);
+  if(await evaluate(`Boolean(document.querySelector('.debrief-log'))`)) throw new Error('Timeline should initially be collapsed');
+  await evaluate(`document.querySelector('.debrief-toggle').click()`);
+  await delay(150);
   await assess("desktop", true);
   const scroll = await evaluate(`(() => {
     const log = document.querySelector('.debrief-log');

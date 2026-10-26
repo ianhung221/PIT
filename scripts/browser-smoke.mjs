@@ -8,10 +8,12 @@ import { verifyPitSupport } from "./browser-pit-support.mjs";
 import { verifyPitPolicy } from "./browser-pit-policy.mjs";
 import { verifyControl } from "./browser-control.mjs";
 import { verifyPlayerDriving } from "./browser-player-driving.mjs";
+import { verifyPractice } from './browser-practice.mjs';
 import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
 const worldCheck = process.env.PIT_TEST_WORLD === "true";
+const practiceCheck = process.env.PIT_TEST_PRACTICE === 'true';
 const weather = process.env.PIT_TEST_WEATHER ?? "rain";
 const scene = process.env.PIT_TEST_SCENE ?? "highway";
 const quality = process.env.PIT_TEST_QUALITY ?? "high";
@@ -138,13 +140,18 @@ try {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   })()`);
   await delay(300);
+  if (practiceCheck) {
+    if (!worldCheck) throw new Error('Practice test requires PIT_TEST_WORLD=true');
+    await evaluate(`(() => {const buttons=[...document.querySelectorAll('button')];buttons.find(b=>b.textContent==='PIT 練習').click();if(${JSON.stringify(process.env.PIT_TEST_VEHICLE)}==='interceptor')buttons.find(b=>b.textContent.includes('攔截跑車')).click();})()`);
+    await delay(200);
+  }
   await evaluate(`document.querySelector(".deploy-button").click()`);
   console.log("browser: mission started");
-  await waitFor('Boolean(document.querySelector("canvas") && document.querySelector(".hud-camera strong"))', "game");
+  await waitFor('Boolean(document.querySelector("canvas") && (document.querySelector(".hud-camera strong") || document.querySelector(".practice-start")))', "game");
   await delay(5000);
   const game = await evaluate(`({
     canvas: Boolean(document.querySelector("canvas")),
-    camera: document.querySelector(".hud-camera strong")?.textContent ?? "",
+    camera: document.querySelector(".hud-camera strong")?.textContent ?? (document.querySelector('.practice-shell')?'練習後方追蹤':''),
     logo: document.querySelector(".game-logo")?.textContent ?? ""
   })`);
   if (!game.canvas || !game.logo.includes("PIT") || !game.camera) {
@@ -158,7 +165,7 @@ try {
       function walk(f) {
         if (!f || visited.has(f)) return;
         visited.add(f);
-        if (f.memoizedProps?.runtime?.current?.road) result.runtime = f.memoizedProps.runtime.current;
+        if (f.memoizedProps?.runtime?.current?.road || f.memoizedProps?.runtime?.current?.mode==='practice') result.runtime = f.memoizedProps.runtime.current;
         const object = f.stateNode?.object;
         if (object?.name === "procedural-world") result.world = object;
         if (object?.name === "weather-particles") result.particles = object;
@@ -172,7 +179,11 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (process.env.PIT_TEST_DRIVING === "true") {
+  if (practiceCheck) {
+    await verifyPractice({evaluate,command,delay,capture,waitFor});
+    if(runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
+    console.log('practice: all browser fixtures passed', url);
+  } else if (process.env.PIT_TEST_DRIVING === "true") {
     if (!worldCheck) throw new Error("Driving test requires PIT_TEST_WORLD=true");
     await verifyPlayerDriving({evaluate,command,delay,capture});
     if (runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);

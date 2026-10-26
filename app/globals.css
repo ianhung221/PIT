@@ -1,5 +1,37 @@
 @import "tailwindcss";
 
+/* V3 diagnostics: bounded panels keep driving and result actions accessible. */
+.pit-diagnostic { display:grid; gap:6px; font-size:12px; line-height:1.5; text-align:left; }
+.pit-diagnostic .pit-history { font-size:13px; color:#79dfc2; }
+.pit-diagnostic .pit-latest { font-size:12px; color:#e1e6e7; }
+.diagnostic-details { max-height:165px; overflow:auto; overscroll-behavior:contain; padding:8px; background:#0b151ad9; color:#ccd6d9; }
+.diagnostic-toggles { display:flex; flex-wrap:wrap; gap:10px; font-size:12px; margin-top:10px; }
+.diagnostic-toggles label { display:flex; align-items:center; gap:5px; }
+.hud-target .pit-diagnostic { max-width:290px; }
+.hud-target > .pit-diagnostic { height:auto; padding:8px; background:#091418df; }
+.hud-target .pit-diagnostic > span { font-size:12px; }
+.debrief-summary { padding:12px; background:#172224; flex-shrink:0; }
+.debrief-summary p { font-size:12px; margin:8px 0 0; }
+.result-card button.debrief-toggle { padding:6px; font-size:11px; flex-shrink:0; }
+.practice-diagnostics { position:absolute; top:115px; left:24px; width:min(340px,calc(100% - 48px)); padding:14px; background:#091418e8; color:#e1e7e9; border-left:3px solid #65d8b9; max-height:45vh; overflow:auto; }
+.practice-diagnostics > small { display:block; color:#a4b9ba; margin-bottom:10px; }
+.practice-driving { position:absolute; bottom:55px; left:24px; display:grid; gap:5px; padding:12px; background:#091418e8; font-size:13px; max-width:calc(100% - 48px); }
+.practice-driving strong { font-size:24px; }
+.practice-driving button { border:1px solid #607778; padding:6px 10px; margin:3px; }
+.practice-driving button:disabled { opacity:.45; }
+.practice-modal details { min-height:0; overflow:auto; }
+.practice-modal .debrief-actions { flex-wrap:wrap; }
+.practice-modal .pit-diagnostic { max-height:20vh; overflow:auto; }
+.practice-shell .game-top { display:flex; justify-content:space-between; }
+@media(max-width:600px) {
+  .practice-shell .game-top { padding:16px; }
+  .practice-diagnostics { top:80px; left:12px; width:calc(100% - 24px); max-height:38vh; padding:10px; }
+  .practice-driving { left:12px; bottom:38px; max-width:calc(100% - 24px); padding:8px; }
+  .practice-shell .game-controls { font-size:9px; }
+  .hud-target .pit-diagnostic { max-width:160px; max-height:130px; overflow:auto; }
+  .debrief-summary { max-height:140px; overflow:auto; }
+}
+
 .contact-feedback { position:absolute; left:50%; bottom:140px; transform:translateX(-50%); max-width:min(680px,90vw); padding:12px 18px; background:rgba(10,18,22,.92); border-left:3px solid #e9ad52; color:#edf5f6; font-size:13px; pointer-events:none; z-index:12; }
 .contact-feedback--effective { border-color:#72d4a4; }
 .contact-feedback--unsafe, .contact-feedback--excessive { border-color:#ff7139; }
