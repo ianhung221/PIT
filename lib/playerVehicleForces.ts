@@ -1,7 +1,7 @@
 import type { RapierRigidBody } from '@react-three/rapier';
 import { stepPlayerDriving, playerTurnRate, type PlayerDriving } from './playerDriving.ts';
 import { steeringInput } from './gameRules.ts';
-import { vehicleCanContinue, vehicleDriveability } from './vehicleDamage.ts';
+import { vehicleCanContinue, vehicleDriveability, playerVehicleStatus } from './vehicleDamage.ts';
 import type { VehicleDamage } from '../types/game.ts';
 import { VEHICLES, type VehicleId } from './gameConfig.ts';
 export type DrivingFrame={forwardX:number;forwardZ:number;rightX:number;rightZ:number;velocityX:number;velocityZ:number;forwardSpeed:number;lateralSpeed:number};
@@ -10,6 +10,8 @@ export function applyPlayerForces(player:RapierRigidBody, frame:DrivingFrame, dr
   const spec=VEHICLES[vehicle], mass=player.mass();
   const throttle=keys.has('arrowup')||keys.has('w'),brake=keys.has('arrowdown')||keys.has('s');
   const steer=steeringInput(keys.has('arrowleft')||keys.has('a'),keys.has('arrowright')||keys.has('d'));
+  driving.input={up:throttle,down:brake,left:keys.has('arrowleft')||keys.has('a'),right:keys.has('arrowright')||keys.has('d')};
+  driving.vehicleStatus=playerVehicleStatus(damage);
   const acceleration=spec.acceleration*grip*(.42+vehicleDriveability(damage)*.58);
   stepPlayerDriving(driving,{throttle,brake,steer},frame.forwardSpeed,spec.maxSpeed*(.52+damage.engine*.48),acceleration,vehicleCanContinue(damage),dt);
   if(driving.throttle>0) {
@@ -17,7 +19,11 @@ export function applyPlayerForces(player:RapierRigidBody, frame:DrivingFrame, dr
     player.applyImpulse({x:frame.forwardX*mass*force*dt,y:0,z:frame.forwardZ*mass*force*dt},true);
   }
   if(brake) {
-    const braking=frame.forwardSpeed>.8?-Math.min(frame.forwardSpeed,24*grip*dt):-7*grip*dt;
+    // Brakes remain available when disabled; reverse propulsion requires the
+    // same driveability as forward propulsion. Preserve healthy-car behavior.
+    const braking=!vehicleCanContinue(damage)
+      ? -Math.sign(frame.forwardSpeed)*Math.min(Math.abs(frame.forwardSpeed),24*grip*dt)
+      : frame.forwardSpeed>.8?-Math.min(frame.forwardSpeed,24*grip*dt):-7*grip*dt;
     player.applyImpulse({x:frame.forwardX*mass*braking,y:0,z:frame.forwardZ*mass*braking},true);
   }
   const correction=-frame.lateralSpeed*mass*Math.min(1,grip*8*dt*(.45+damage.alignment*.55));

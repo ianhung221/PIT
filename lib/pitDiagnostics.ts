@@ -1,5 +1,6 @@
 import { classifyPhysicalContact, physicalPitOutcome, V2_PIT, type PhysicalContact } from './pitContact.ts';
 import { normalizeAngle } from './gameRules.ts';
+import type { ContactEpisode } from './pitContactEpisode.ts';
 
 export const DIAGNOSTIC_LIMIT = 60;
 export type ContactCheck = { code: string; label: string; pass: boolean; value: string; hint: string };
@@ -29,7 +30,7 @@ export function outcomeSample(startYaw: number, yaw: number, startSpeed: number,
   if (startSpeed<=4) reasons.push('接觸前速度未高於 4 m/s');
   return { yaw:angle*180/Math.PI,speedDrop:drop,lateralSpeed:Math.abs(lateralSpeed),contactTime,startSpeed,remaining:Math.max(0,remaining),success:result.success,reasons };
 }
-export type DiagnosticAttempt = { id:number; at:number; contact:PhysicalContact; checks:ContactCheck[]; classification:ReturnType<typeof classifyPhysicalContact>['classification']; status:'rejected'|'evaluating'|'qualified'|'expired'; message:string; sample:OutcomeSample|null };
+export type DiagnosticAttempt = { id:number; at:number; contact:PhysicalContact; checks:ContactCheck[]; classification:ReturnType<typeof classifyPhysicalContact>['classification']; status:'observing'|'rejected'|'evaluating'|'qualified'|'expired'; message:string; sample:OutcomeSample|null };
 export type DiagnosticEvent = { attempt:number; at:number; message:string; evidence:DiagnosticAttempt|null };
 export type PitDiagnostics = { version:'v3-batch1'; mode:'mission'|'practice'; config:string; nextId:number; latest:DiagnosticAttempt|null; lastSuccess:DiagnosticAttempt|null; events:DiagnosticEvent[] };
 export function makeDiagnostics(mode: PitDiagnostics['mode'], config:string): PitDiagnostics {
@@ -61,4 +62,25 @@ export function diagnosticSummary(d:PitDiagnostics) {
     latest:latest ? `#${latest.id} · ${latest.at.toFixed(1)}s · ${latest.message}`:'尚無接觸紀錄',
     history:d.lastSuccess?`本局已完成有效 PIT #${d.lastSuccess.id}（${d.lastSuccess.at.toFixed(1)}s 接觸）`:'本局尚未確認有效 PIT',
   };
+}
+export function observeDiagnostic(d:PitDiagnostics,contact:PhysicalContact,episode:ContactEpisode,at:number,changed:boolean) {
+  if(!episode.diagnosticId) {beginDiagnostic(d,contact,at);episode.diagnosticId=d.latest!.id;}
+  const attempt=d.latest;
+  if(!attempt||attempt.id!==episode.diagnosticId)return;
+  if(episode.status==='done')return;
+  if(episode.status==='evaluating'&&!changed)return;
+  if(episode.status==='locked'&&!changed)return;
+  const oldMessage=attempt.message;
+  attempt.contact={...contact};attempt.checks=contactChecks(contact);attempt.classification=episode.classification;
+  if(episode.status==='observing') {attempt.status='observing';attempt.message='接觸觀察中：'+attempt.checks.filter(c=>!c.pass).map(c=>c.label+'不符').join('、');}
+  if(episode.status==='evaluating') {attempt.status='evaluating';attempt.message='連續接觸符合條件，評估實際失控';}
+  if(episode.status==='expired') {attempt.status='rejected';attempt.message='接觸觀察期限已到，未形成合適接觸';}
+  if(episode.status==='locked') {attempt.status='rejected';attempt.message=classifyPhysicalContact(contact).reason+'；本段不可轉為合格，需分離後重試';}
+  if(changed&&attempt.message!==oldMessage)record(d,attempt.id,at,attempt.message);
+}
+export function closeContactDiagnostic(d:PitDiagnostics,episode:ContactEpisode|null,at:number) {
+  const a=d.latest;
+  if(!episode||!a||episode.diagnosticId!==a.id||a.status!=='observing')return;
+  a.status='rejected';a.message='接觸已分離，未形成合適接觸';
+  record(d,a.id,at,a.message);
 }

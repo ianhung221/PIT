@@ -42,7 +42,7 @@ export async function verifyPlayerDriving({evaluate,command,delay,capture}) {
     let hit=!first.driving.cruise&&first.driving.target>0&&first.driving.reason.includes('碰撞');
     if(!first.driving.cruise&&!hit)throw Error('Collision fixture cruise not enabled: '+mode+' '+JSON.stringify(first));
     for(let i=0;i<50&&!hit;i++){await delay(100);const r=await read();if(!r.driving.cruise&&r.driving.reason.includes('碰撞')){hit=true;break;}}
-    if(!hit)throw Error('Collision failed to cancel cruise: '+mode);
+    if(!hit){await capture('failed-cruise-'+mode);throw Error('Collision failed to cancel cruise: '+mode+' '+JSON.stringify(await read()));}
     console.log('player driving: actual collision cancelled cruise',mode);
   }
   await command('Emulation.setDeviceMetricsOverride',{width:375,height:667,deviceScaleFactor:1,mobile:true});await delay(300);await capture('player-controls-mobile');

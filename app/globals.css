@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+.player-status { padding:8px; margin-top:6px; background:#0b2023e8; color:#cbe5dc; text-align:left; font-size:11px; line-height:1.5; }
+.player-status--disabled { border-left:3px solid #ff7139; }
+.player-input-details { max-height:110px; overflow:auto; padding-top:6px; }
+.hud-target > .player-status { height:auto; }
+.hud-target .player-status span { color:#d3e6df; font-size:11px; letter-spacing:0; }
+.hud-target .player-status--disabled span { color:#ffb38f; }
+
 /* V3 diagnostics: bounded panels keep driving and result actions accessible. */
 .pit-diagnostic { display:grid; gap:6px; font-size:12px; line-height:1.5; text-align:left; }
 .pit-diagnostic .pit-history { font-size:13px; color:#79dfc2; }

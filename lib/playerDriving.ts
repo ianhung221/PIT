@@ -1,5 +1,9 @@
 /** Fixed-step player controls. Speeds are m/s; cruise UI targets are km/h. */
+import { playerVehicleStatus, pristineDamage } from './vehicleDamage.ts';
 export interface PlayerDriving {
+  input: {up:boolean;down:boolean;left:boolean;right:boolean};
+  lastInputEvent: string;
+  vehicleStatus: ReturnType<typeof playerVehicleStatus>;
   throttle: number;
   steering: number;
   cruise: boolean;
@@ -9,13 +13,18 @@ export interface PlayerDriving {
   touching: boolean;
   commands: ("toggle" | "up" | "down")[];
 }
-export const makePlayerDriving = (): PlayerDriving => ({ throttle:0, steering:0, cruise:false, target:0, reason:"", integral:0, touching:false, commands:[] });
+export const makePlayerDriving = (): PlayerDriving => ({ input:{up:false,down:false,left:false,right:false}, lastInputEvent:'尚無按鍵', vehicleStatus:playerVehicleStatus(pristineDamage()), throttle:0, steering:0, cruise:false, target:0, reason:"", integral:0, touching:false, commands:[] });
+export function noteDrivingKey(s:PlayerDriving,key:string,down:boolean,accepted=true) {
+  const labels:Record<string,string>={arrowup:'↑',arrowdown:'↓',arrowleft:'←',arrowright:'→',w:'W',s:'S',a:'A',d:'D'};
+  if(labels[key]) s.lastInputEvent=accepted?`${labels[key]} ${down?'按下已收到':'放開已收到'}`:`${labels[key]} 長按已忽略：請完全放開後重按`;
+}
 export function cancelCruise(s: PlayerDriving, reason: string) {
   if (s.cruise) { s.reason = reason; s.throttle = 0; }
   s.cruise = false; s.integral = 0;
 }
 export function resetPlayerDriving(s: PlayerDriving, reason: string) {
   cancelCruise(s, reason); s.throttle=0; s.steering=0; s.target=0; s.reason=reason; s.commands.length=0;
+  s.input={up:false,down:false,left:false,right:false}; s.lastInputEvent=reason+'：請鬆開後重按';
 }
 const clamp = (v:number, lo:number, hi:number) => Math.max(lo, Math.min(hi,v));
 const approach = (v:number, target:number, step:number) => v + clamp(target-v,-step,step);

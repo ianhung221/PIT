@@ -43,3 +43,15 @@ export function vehicleDriveability(damage: VehicleDamage): number {
 export function vehicleCanContinue(damage: VehicleDamage): boolean {
   return damage.engine > .16 && damage.steering > .2 && vehicleDriveability(damage) > .28;
 }
+
+export function playerVehicleStatus(damage: VehicleDamage) {
+  const driveable=vehicleCanContinue(damage), steeringAuthority=damage.steering*damage.alignment;
+  const faults:string[]=[];
+  if(damage.engine<=.16) faults.push('引擎失能');
+  if(damage.steering<=.2) faults.push('轉向系統嚴重受損');
+  else if(steeringAuthority<.5) faults.push('轉向能力受損');
+  if(damage.alignment<=.001) faults.push('車輪定位失效，無法轉向');
+  if(!driveable&&!faults.length) faults.push('整體車況不足');
+  return {driveable,steeringAuthority,health:vehicleDriveability(damage),
+    reason:driveable?(faults.join('；')||'自車可正常駕駛'):`動力不可用：${faults.join('；')}；可煞車，P 暫停後可返回設定`};
+}

@@ -3,6 +3,7 @@
 import { stageControlParking } from "./browser-control.mjs";
 export async function verifyPitSupport({ evaluate, command, delay, capture }) {
   const mode = process.env.PIT_TEST_CONTACT ?? "effective";
+  const positive=mode==='effective'||mode==='continuous';
   const radio = async n => {
     await evaluate(`document.querySelector('.radio-trigger').click()`);
     await delay(100);
@@ -21,7 +22,7 @@ export async function verifyPitSupport({ evaluate, command, delay, capture }) {
       bodies[i].setLinvel({x:-Math.sin(yaw)*speed,y:0,z:-Math.cos(yaw)*speed},true); bodies[i].setAngvel({x:0,y:0,z:0},true);
       const snapshot=i===0?s.player:i===1?s.suspect:s.supports[i-2]; Object.assign(snapshot,{x,z,yaw,speed,lateralSpeed:0});
     };
-    place(0,2.05,${mode === "center" ? 0 : -3.9},16);place(1,0,0,12);place(2,-3,-18,12);place(3,2.8,-30,10);
+    place(0,2.05,${mode === "center" ? 0 : mode === 'continuous' ? -4.5 : -3.9},16);place(1,0,0,12);place(2,-3,-18,12);place(3,2.8,-30,10);
     bodies[0].setLinvel({x:-Math.sin(seg.yaw)*16-Math.cos(seg.yaw)*7,y:0,z:-Math.cos(seg.yaw)*16+Math.sin(seg.yaw)*7},true);
     s.playerRoadIndex=1;s.suspectRoadIndex=1;s.supportRoadIndices=[1,1];
     s.elapsed=0;s.commandAt=0;s.collisionCooldown=0;
@@ -41,7 +42,7 @@ export async function verifyPitSupport({ evaluate, command, delay, capture }) {
     final = await evaluate(`(() => {const s=window.__pitInspect().runtime;return {attempts:s.attempts,qualified:s.pitQualified,contacts:s.successfulContacts,candidate:!!s.pitCandidate,pit:s.pit,phase:s.blockade.phase,heldFor:s.heldFor,outcome:s.outcome,command:s.tacticalCommand,result:s.result,suspect:s.suspect,supports:s.supports,feedback:s.contactFeedback,events:s.eventLog.slice(0,6)}})()`);
     contact ||= final.candidate || final.attempts > 0; qualified ||= final.qualified || final.contacts > 0; stages.add(final.phase);
     if (i % 8 === 0) console.log("pit-support: sample", {attempts:final.attempts,qualified:final.qualified,pit:final.pit,phase:final.phase,result:final.result,feedback:final.feedback});
-    if (mode !== "effective" && i >= 12) break;
+    if (!positive && i >= 12) break;
     if (!qualified && i >= 16 && !final.candidate) break;
     if (qualified && process.env.PIT_TEST_DISABLED === "true") {
       // Isolate the damage gate only after physical PIT qualification.
@@ -53,6 +54,12 @@ export async function verifyPitSupport({ evaluate, command, delay, capture }) {
       await capture("pit-disabled");return;
     }
     if (qualified && process.env.PIT_TEST_HOLD === "true") {
+      if(mode==='continuous') {
+        const d=await evaluate('window.__pitInspect().runtime.diagnostics');
+        const promoted=d.events.find(e=>e.evidence?.status==='evaluating'&&d.events.some(first=>first.attempt===e.attempt&&first.evidence?.classification==='scrape'&&first.at<e.at));
+        if(!promoted||d.lastSuccess?.id!==promoted.attempt)throw Error('Continuous mission contact did not preserve one episode through qualification');
+        console.log('pit-support: same-episode scrape-to-qualified',JSON.stringify(d.events));
+      }
       // Real contact qualified above. Isolate a closed parking geometry now,
       // with stationary test blockers; this does not prove autonomous AI parking.
       await evaluate(`document.querySelector('.game-top button').click()`);
@@ -70,7 +77,7 @@ export async function verifyPitSupport({ evaluate, command, delay, capture }) {
   }
   await capture("pit-support-contact");
   console.log("pit-support: outcome", {contact,qualified,stages:[...stages],final});
-  if (mode !== "effective") {
+  if (!positive) {
     const expected = mode === "center" ? "scrape" : "unsafe";
     // An unsafe contact must never earn PIT credit. A later genuine disabled
     // stop may still end the mission under the independent control rules.

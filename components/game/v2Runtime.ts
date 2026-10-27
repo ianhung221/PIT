@@ -19,6 +19,7 @@ import { evaluatePitRisk, missionPitRisk } from "@/lib/pitPolicy";
 import type { ContactFeedback } from "@/lib/pitContact";
 import { initialControl, type ControlAssessment } from "@/lib/vehicleControlAssessment";
 import { makeDiagnostics, type PitDiagnostics } from "@/lib/pitDiagnostics";
+import { makeContactEpisodes } from '@/lib/pitContactEpisode';
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -38,6 +39,7 @@ export interface SupportUnitSnapshot extends CarSnapshot {
 }
 
 export interface V2Runtime {
+  contactEpisodes: ReturnType<typeof makeContactEpisodes>;
   diagnostics: PitDiagnostics;
   driving: PlayerDriving;
   player: CarSnapshot;
@@ -87,6 +89,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
   const seed = config.seed?.trim() || "PIT-TRAINING";
   const initialSpeed = SCENES[config.scene].aiSpeed * .72;
   return {
+    contactEpisodes: makeContactEpisodes(),
     diagnostics: makeDiagnostics('mission', JSON.stringify(config)),
     driving: makePlayerDriving(),
     player: snapshot(0, 8),

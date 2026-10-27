@@ -9,6 +9,7 @@ import { verifyPitPolicy } from "./browser-pit-policy.mjs";
 import { verifyControl } from "./browser-control.mjs";
 import { verifyPlayerDriving } from "./browser-player-driving.mjs";
 import { verifyPractice } from './browser-practice.mjs';
+import { verifyPracticeRepair } from './browser-practice-repair.mjs';
 import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
@@ -180,6 +181,7 @@ try {
   }
 
   if (practiceCheck) {
+    if(process.env.PIT_TEST_REPAIR==='true')await verifyPracticeRepair({evaluate,command,delay,capture});
     await verifyPractice({evaluate,command,delay,capture,waitFor});
     if(runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
     console.log('practice: all browser fixtures passed', url);

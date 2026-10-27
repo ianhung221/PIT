@@ -6,7 +6,6 @@ import {
   RigidBody,
   useBeforePhysicsStep,
   useAfterPhysicsStep,
-  type CollisionEnterPayload,
   type RapierRigidBody,
 } from "@react-three/rapier";
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
@@ -14,7 +13,10 @@ import * as THREE from "three";
 import { VehicleModel } from "@/components/game/VehicleModel";
 import { resetPlayerDriving, cancelCruise, type PlayerDriving } from "@/lib/playerDriving";
 import { applyPlayerForces } from "@/lib/playerVehicleForces";
-import { beginDiagnostic, outcomeSample, updateDiagnostic } from "@/lib/pitDiagnostics";
+import { applyPitTargetControl } from '@/lib/pitTargetControl';
+import { observeDiagnostic, closeContactDiagnostic, outcomeSample, updateDiagnostic } from "@/lib/pitDiagnostics";
+import { observeContactEpisode, finishContactEpisode } from '@/lib/pitContactEpisode';
+import { physicalContactSample } from '@/lib/physicalContactSample';
 import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
 import { logRuntimeEvent, updateRadioFeedback, refreshPitAuthorization } from "@/components/game/v2Runtime";
 import {
@@ -35,7 +37,7 @@ import {
   suspectReverseEscapeYaw,
 } from "@/lib/gameRules";
 import { closestRoadSegment, roadTarget } from "@/lib/proceduralMap";
-import { localPoint, physicalPitOutcome, pitMissionResolution, V2_PIT, type ContactFeedback } from "@/lib/pitContact";
+import { physicalPitOutcome, pitMissionResolution, V2_PIT, type ContactFeedback } from "@/lib/pitContact";
 import { suspectRoadCruise } from "@/lib/pitPolicy";
 import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
 import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
@@ -107,7 +109,6 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
   const support3Ref = useRef<RapierRigidBody>(null);
   const lastUi = useRef(0);
   const preImpact = useRef<{player: BodyFrame; suspect: BodyFrame} | null>(null);
-  const activeContacts = useRef(new Set<string>());
   const temp = useMemo(() => ({
     quaternion: new THREE.Quaternion(),
     forward: new THREE.Vector3(),
@@ -147,101 +148,50 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     onFinish({ result, outcome });
   };
 
-  const handleVehicleCollision = (event: Pick<CollisionEnterPayload, "manifold"> & {other: {rigidBody: {handle: number}}}) => {
-    const player = playerRef.current;
-    const suspect = suspectRef.current;
-    if (!player || !suspect || event.other.rigidBody?.handle !== suspect.handle) return;
-    const state = runtime.current;
-    if (state.result !== "playing" || state.collisionCooldown > 0 || state.pitCandidate) return;
-    const manifold = event.manifold;
-    if (!manifold.numSolverContacts()) {
-      state.contactFeedback = { classification: "scrape", message: "一般碰撞：接觸資料不足，不列入 PIT", at: state.elapsed };
-      return;
-    }
-    // Solver contacts are world-space points; flipped does not affect them.
-    // Average the actual face instead of selecting a favourable rear-most point.
-    let x = 0, z = 0;
-    for (let i = 0; i < manifold.numSolverContacts(); i++) {
-      const point = manifold.solverContactPoint(i); x += point.x; z += point.z;
-    }
-    x /= manifold.numSolverContacts(); z /= manifold.numSolverContacts();
-    const playerPosition = player.translation();
-    const suspectPosition = suspect.translation();
-    const playerFrame = bodyFrame(player), suspectFrame = bodyFrame(suspect);
-    const previous = preImpact.current ?? { player: playerFrame, suspect: suspectFrame };
-    const local = localPoint({x:suspectPosition.x,z:suspectPosition.z,yaw:suspectFrame.yaw}, {x,z});
-    const playerLocal = localPoint({x:playerPosition.x,z:playerPosition.z,yaw:playerFrame.yaw}, {x,z});
-    const normal = manifold.normal();
-    const sign = normal.x * (suspectPosition.x - playerPosition.x) + normal.z * (suspectPosition.z - playerPosition.z) >= 0 ? 1 : -1;
-    const nx = normal.x * sign, nz = normal.z * sign;
-    const dx = previous.player.velocityX - previous.suspect.velocityX;
-    const dz = previous.player.velocityZ - previous.suspect.velocityZ;
-    const closingSpeed = Math.hypot(dx, dz), normalSpeed = Math.max(0, dx * nx + dz * nz);
-    refreshPitAuthorization(state, config, { ...state.suspect, speed: previous.suspect.forwardSpeed, lateralSpeed: previous.suspect.lateralSpeed }, true);
-    const assessment = beginDiagnostic(state.diagnostics, { localX:local.x, localZ:local.z, playerLocalX:playerLocal.x, playerLocalZ:playerLocal.z,
-      normalSide:nx * suspectFrame.rightX + nz * suspectFrame.rightZ, closingSpeed, normalSpeed,
-      headingDelta:normalizeAngle(previous.player.yaw - previous.suspect.yaw), halfWidth:SUSPECT.width/2, halfLength:SUSPECT.length/2,
-      playerHalfLength:VEHICLES[config.vehicle].length/2,
-      authorized:state.authorization === "authorized" && state.authorizationExpires >= state.elapsed }, state.elapsed);
-    state.collisionCooldown = .5;
-    const impact = Math.max(2, normalSpeed * 2);
-    state.suspectDamage = applyImpactDamage(state.suspectDamage, {
-      impulse: impact,
-      localX: local.x,
-      localZ: local.z,
-      halfWidth: SUSPECT.width / 2,
-      halfLength: SUSPECT.length / 2,
-    });
-    state.playerDamage = applyImpactDamage(state.playerDamage, {
-      impulse: impact * .72,
-      localX: playerLocal.x,
-      localZ: playerLocal.z,
-      halfWidth: VEHICLES[config.vehicle].width / 2,
-      halfLength: VEHICLES[config.vehicle].length / 2,
-    });
-    state.contactFeedback = { classification: assessment.classification, message: assessment.reason, at: state.elapsed };
-    logRuntimeEvent(state, assessment.reason);
-    if (assessment.classification === "scrape") return;
-    state.attempts += 1;
-    if (assessment.classification !== "effective") {
-      state.unsafeContacts += 1;
-      state.outcome = "unsafe-pit";
-      return;
-    }
-    state.pitCandidate = {
-      startYaw: previous.suspect.yaw,
-      startSpeed: Math.hypot(previous.suspect.velocityX, previous.suspect.velocityZ),
-      expires: state.elapsed + V2_PIT.window,
-      side: local.x > 0 ? 1 : -1,
-      authorized: true,
-      quality: Math.min(1, normalSpeed / 5),
-      contactTime: 1 / 60,
-    };
-    state.pit = 18;
-    logRuntimeEvent(state, "PIT 接觸成立：正在評估旋轉與減速");
-  };
-
-  // Frame-batched collision events may report a later contact after several
-  // substeps. Sample each fixed step with its matching pre-impact velocity.
+  // Fixed-step pair sampling shares the same segment semantics with practice.
   useAfterPhysicsStep(world => {
-    const player = playerRef.current, suspect = suspectRef.current;
-    if (!player || !suspect || runtime.current.result !== "playing") return;
-    const touching = new Set<string>();
-    let solidContact = false;
-    for (let i=0;i<player.numColliders();i++) world.contactPairsWith(player.collider(i), other => {
-      world.contactPair(player.collider(i), other, manifold => { if (manifold.numSolverContacts()>0) solidContact=true; });
+    const player=playerRef.current,suspect=suspectRef.current,state=runtime.current;
+    if(!player||!suspect||state.result!=="playing")return;
+    let solidContact=false;
+    for(let i=0;i<player.numColliders();i++)world.contactPairsWith(player.collider(i),other=>{
+      world.contactPair(player.collider(i),other,m=>{if(m.numSolverContacts())solidContact=true;});
     });
-    runtime.current.driving.touching=solidContact;
-    if (solidContact) cancelCruise(runtime.current.driving,"碰撞／接觸障礙");
-    for (let i = 0; i < player.numColliders(); i++) for (let j = 0; j < suspect.numColliders(); j++) {
-      const key = `${i}:${j}`;
-      world.contactPair(player.collider(i), suspect.collider(j), manifold => {
-        if (!manifold.numSolverContacts()) return;
-        touching.add(key);
-        if (!activeContacts.current.has(key)) handleVehicleCollision({manifold, other:{rigidBody:{handle:suspect.handle}}});
-      });
+    state.driving.touching=solidContact;
+    if(solidContact)cancelCruise(state.driving,"碰撞／接觸障礙");
+    const pf=bodyFrame(player),sf=bodyFrame(suspect),pre=preImpact.current??{player:pf,suspect:sf};
+    const contact=physicalContactSample(world,player,suspect,pf,sf,pre,config.vehicle,false);
+    if(contact) {
+      refreshPitAuthorization(state,config,{...state.suspect,speed:pre.suspect.forwardSpeed,lateralSpeed:pre.suspect.lateralSpeed},true);
+      contact.authorized=state.authorization==="authorized"&&state.authorizationExpires>=state.elapsed;
     }
-    activeContacts.current = touching;
+    const previousEpisode=state.contactEpisodes.current;
+    const decision=observeContactEpisode(state.contactEpisodes,contact,state.elapsed,!!state.pitCandidate);
+    if(previousEpisode!==state.contactEpisodes.current)closeContactDiagnostic(state.diagnostics,previousEpisode,state.elapsed);
+    const episode=state.contactEpisodes.current;
+    if(!contact||!episode)return;
+    if(decision.started||episode.diagnosticId)observeDiagnostic(state.diagnostics,contact,episode,state.elapsed,decision.changed);
+    if(decision.damage) {
+      const impact=Math.max(2,contact.normalSpeed*2);
+      state.suspectDamage=applyImpactDamage(state.suspectDamage,{impulse:impact,localX:contact.localX,localZ:contact.localZ,halfWidth:SUSPECT.width/2,halfLength:SUSPECT.length/2});
+      state.playerDamage=applyImpactDamage(state.playerDamage,{impulse:impact*.72,localX:contact.playerLocalX,localZ:contact.playerLocalZ,halfWidth:VEHICLES[config.vehicle].width/2,halfLength:VEHICLES[config.vehicle].length/2});
+    }
+    if(decision.changed) {
+      const message=episode.status==='expired'?'接觸觀察期限已到，未形成合適接觸':decision.assessment!.reason;
+      state.contactFeedback={classification:episode.classification,message,at:state.elapsed};
+      logRuntimeEvent(state,message);
+    }
+    if(decision.countAttempt)state.attempts++;
+    if(decision.unsafe) {
+      state.unsafeContacts++;state.outcome="unsafe-pit";state.pitCandidate=null;state.pit=0;
+      return;
+    }
+    if(decision.promoted) {
+      state.pitCandidate={startYaw:pre.suspect.yaw,startSpeed:Math.hypot(pre.suspect.velocityX,pre.suspect.velocityZ),
+        expires:state.elapsed+V2_PIT.window,side:contact.localX>0?1:-1,authorized:true,
+        quality:Math.min(1,contact.normalSpeed/5),contactTime:world.timestep};
+      state.pit=18;
+      logRuntimeEvent(state,"PIT 接觸成立：正在評估旋轉與減速");
+    }
   });
 
   useBeforePhysicsStep((world) => {
@@ -348,7 +298,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       z: suspectFrame.forwardZ * suspectMass * suspectAcceleration * dt,
     }, true);
     const suspectLateral = -suspectFrame.lateralSpeed * suspectMass * Math.min(1, grip * tireGrip * 7 * dt * candidateControl);
-    suspect.applyImpulse({ x: suspectFrame.rightX * suspectLateral, y: 0, z: suspectFrame.rightZ * suspectLateral }, true);
+    if(state.pitCandidate) applyPitTargetControl(suspect,suspectFrame,state.suspectDamage,grip,dt);
+    else suspect.applyImpulse({ x: suspectFrame.rightX * suspectLateral, y: 0, z: suspectFrame.rightZ * suspectLateral }, true);
 
     if (state.pitCandidate) {
       let touching = false;
@@ -369,6 +320,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         state.pitCandidate.startSpeed, planarSuspectSpeed, suspectFrame.lateralSpeed,
         state.pitCandidate.contactTime, state.pitCandidate.expires-state.elapsed), state.elapsed, state.elapsed>=state.pitCandidate.expires);
       if (outcome.success) {
+        finishContactEpisode(state.contactEpisodes);
         state.pitCandidate = null;
         state.pitQualified = true;
         state.containmentElapsed = 0;
@@ -378,6 +330,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         state.contactFeedback = { classification: "effective", message: "有效 PIT：失控已確認，尚待控制嫌犯", at:state.elapsed };
         logRuntimeEvent(state, vehicleCanContinue(state.suspectDamage) ? "有效 PIT：嫌犯車仍可行駛，後援開始包圍" : "有效 PIT：嫌犯車已失去行動能力");
       } else if (state.elapsed >= state.pitCandidate.expires) {
+        finishContactEpisode(state.contactEpisodes);
         state.pitCandidate = null;
         state.pit = 0;
         state.contactFeedback = { classification:"scrape", message:"接觸未造成足夠失控，繼續追逐", at:state.elapsed };

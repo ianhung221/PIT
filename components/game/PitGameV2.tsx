@@ -17,7 +17,8 @@ import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } f
 import { vehicleDriveability } from "@/lib/vehicleDamage";
 import { makeBlockade } from "@/lib/supportContainment";
 import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
-import { makePlayerDriving, resetPlayerDriving } from "@/lib/playerDriving";
+import { makePlayerDriving, resetPlayerDriving, noteDrivingKey } from "@/lib/playerDriving";
+import { PlayerStatus } from './PlayerStatus';
 import { PitDiagnosticPanel } from './PitDiagnosticPanel';
 import { makeDiagnostics } from '@/lib/pitDiagnostics';
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
@@ -50,10 +51,11 @@ function useControls(onCamera: () => void, onPause: () => void, runtime: React.M
         if (!event.repeat) runtime.current.driving.commands.push(key==="f"?"toggle":key==="["?"down":"up");
         return;
       }
-      if (event.repeat && !keys.current.has(key)) return;
+      if (event.repeat && !keys.current.has(key)) { noteDrivingKey(runtime.current.driving,key,true,false); return; }
+      noteDrivingKey(runtime.current.driving,key,true);
       keys.current.add(key);
     };
-    const up = (event: KeyboardEvent) => keys.current.delete(event.key.toLowerCase());
+    const up = (event: KeyboardEvent) => { const key=event.key.toLowerCase(); keys.current.delete(key); noteDrivingKey(runtime.current.driving,key,false); };
     const visibility = () => { if (document.hidden) clear(); };
     window.addEventListener("keydown", down, { passive: false });
     window.addEventListener("keyup", up);
@@ -292,6 +294,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       <small>TARGET / {hud.biome.toUpperCase()}</small><strong>{hud.distance.toFixed(1)} M</strong>
       <PitDiagnosticPanel data={diagnostics} details={diagnosticDetails}/>
       <label className="diagnostic-toggles"><input type="checkbox" checked={diagnosticDetails} onChange={e=>setDiagnosticDetails(e.target.checked)}/> 詳細量測</label>
+      <PlayerStatus driving={hud.driving} details={diagnosticDetails}/>
     </section>
     <section className={"hud-policy " + policyClass}>
       <small>PIT AUTHORIZATION · 目前</small><strong>{authorization.toUpperCase()}</strong><span>{authorization!==policy.authorization?'授權已過期，等待重新評估':policy.reason}</span>

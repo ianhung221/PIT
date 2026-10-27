@@ -9,7 +9,8 @@ import { makePracticeRuntime, type PracticeRuntime } from './practiceRuntime';
 import { PitDiagnosticPanel } from './PitDiagnosticPanel';
 import { PRACTICE, type PracticeConfig } from '@/lib/practiceConfig';
 import { QUALITY_SETTINGS } from '@/lib/gameConfig';
-import { resetPlayerDriving } from '@/lib/playerDriving';
+import { resetPlayerDriving, noteDrivingKey } from '@/lib/playerDriving';
+import { PlayerStatus } from './PlayerStatus';
 
 function PracticeCamera({runtime}:{runtime:MutableRefObject<PracticeRuntime>}) {
   const initialized=useRef(false);
@@ -48,10 +49,11 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
         if(!e.repeat) runtime.current.driving.commands.push(key==='f'?'toggle':key==='['?'down':'up');
         return;
       }
-      if(e.repeat&&!keys.current.has(key))return;
+      if(e.repeat&&!keys.current.has(key)){noteDrivingKey(runtime.current.driving,key,true,false);return;}
+      noteDrivingKey(runtime.current.driving,key,true);
       keys.current.add(key);
     };
-    const up=(e:KeyboardEvent)=>keys.current.delete(e.key.toLowerCase());
+    const up=(e:KeyboardEvent)=>{const key=e.key.toLowerCase();keys.current.delete(key);noteDrivingKey(runtime.current.driving,key,false);};
     window.addEventListener('keydown',down,{passive:false});window.addEventListener('keyup',up);
     window.addEventListener('blur',clear);document.addEventListener('visibilitychange',visibility);
     return()=>{window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',clear);document.removeEventListener('visibilitychange',visibility);};
@@ -73,6 +75,7 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
     <section className="practice-diagnostics">
       <small>封閉練習許可 · 晴朗／白天 · 不需 Q1</small>
       <PitDiagnosticPanel data={hud.diagnostics} details={details}/>
+      <PlayerStatus driving={hud.driving} details={details}/>
       <div className="diagnostic-toggles"><label><input type="checkbox" checked={details} onChange={e=>setDetails(e.target.checked)}/> 詳細量測</label><label><input type="checkbox" checked={zones} onChange={e=>setZones(e.target.checked)}/> 接觸區域提示</label></div>
     </section>
     <div className="practice-driving"><strong>{Math.round(hud.player.speed*3.6)} km/h</strong><span>經過 {hud.elapsed.toFixed(1)}s · 無倒數</span><span>油門 {Math.round(hud.driving.throttle*100)}% · {hud.driving.cruise?`巡航 ${Math.round(hud.driving.target)} km/h`:'巡航關閉'}</span><small>{hud.driving.reason}</small>
