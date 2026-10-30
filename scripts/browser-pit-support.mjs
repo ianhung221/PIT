@@ -18,7 +18,7 @@ export async function verifyPitSupport({ evaluate, command, delay, capture }) {
     const {runtime:s,bodies}=window.__pitInspect(); const seg=s.road.segments[1];
     const place=(i,side,forward,speed,offset=0)=>{
       const yaw=seg.yaw+offset, x=seg.x+Math.cos(seg.yaw)*side-Math.sin(seg.yaw)*forward, z=seg.z-Math.sin(seg.yaw)*side-Math.cos(seg.yaw)*forward;
-      bodies[i].setTranslation({x,y:.02,z},true); bodies[i].setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
+      bodies[i].setTranslation({x,y:-.325,z},true); bodies[i].setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
       bodies[i].setLinvel({x:-Math.sin(yaw)*speed,y:0,z:-Math.cos(yaw)*speed},true); bodies[i].setAngvel({x:0,y:0,z:0},true);
       const snapshot=i===0?s.player:i===1?s.suspect:s.supports[i-2]; Object.assign(snapshot,{x,z,yaw,speed,lateralSpeed:0});
     };

@@ -1,9 +1,11 @@
 /** Fixed-step player controls. Speeds are m/s; cruise UI targets are km/h. */
 import { playerVehicleStatus, pristineDamage } from './vehicleDamage.ts';
+import { vehicleDragAcceleration } from './vehiclePhysics.ts';
 export interface PlayerDriving {
   input: {up:boolean;down:boolean;left:boolean;right:boolean};
   lastInputEvent: string;
   vehicleStatus: ReturnType<typeof playerVehicleStatus>;
+  physics?: {groundedWheels:number;tilt:number;wheelSteering:number;rolloverDisabled:boolean};
   throttle: number;
   steering: number;
   cruise: boolean;
@@ -42,9 +44,9 @@ export function stepPlayerDriving(s:PlayerDriving, input:{throttle:boolean;brake
   if (s.cruise) {
     s.target=clamp(s.target,10,limit*3.6);
     const error=s.target/3.6-speed;
-    // Feed forward compensates existing linear damping + drag. Anti-windup
+    // Feed forward compensates the shared physical drag. Anti-windup
     // permits integration only when output can respond in the error direction.
-    const feed=speed*.20/Math.max(.1,acceleration);
+    const feed=vehicleDragAcceleration(speed)/Math.max(.1,acceleration);
     const raw=feed+error*.30+s.integral;
     if ((raw>0 && raw<1) || (raw>=1 && error<0) || (raw<=0 && error>0)) s.integral=clamp(s.integral+error*.12*dt,-.4,.4);
     target=error<-.15?0:clamp(feed+error*.30+s.integral,0,1);

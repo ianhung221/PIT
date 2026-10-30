@@ -11,7 +11,7 @@ export async function stageControlParking(evaluate, sealed=true) {
     const positions=[[edge+2.55,-3.65,-Math.PI/2],[edge+1.35,-.25,0],[edge+2.55,3.65,-Math.PI/2],[edge+3.7,${sealed?0:12},0]];
     positions.forEach(([side,z,offset],i)=>{
       const yaw=seg.yaw+offset,x=seg.x+Math.cos(seg.yaw)*side+Math.sin(seg.yaw)*z,worldZ=seg.z-Math.sin(seg.yaw)*side+Math.cos(seg.yaw)*z;
-      const body=bodies[i];body.setTranslation({x,y:.02,z:worldZ},true);body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
+      const body=bodies[i];body.setTranslation({x,y:-.325,z:worldZ},true);body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
       body.setLinvel({x:0,y:0,z:0},true);body.setAngvel({x:0,y:0,z:0},true);
       if(i!==1) {
         body.lockTranslations(true,true);body.lockRotations(true,true);

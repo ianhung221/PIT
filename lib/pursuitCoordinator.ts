@@ -1,7 +1,7 @@
 import type { PursuitRole, RadioCommand, RadioFeedback } from "../types/game.ts";
 import type { BlockadeState } from "./supportContainment.ts";
 
-export const ROLE_LABELS: Record<PursuitRole, string> = { primary: "主追", secondary: "第二順位", tertiary: "第三順位", "containment-front": "車頭封鎖", "containment-rear": "車尾封鎖" };
+export const ROLE_LABELS: Record<PursuitRole, string> = { primary: "主追", secondary: "第二順位", tertiary: "第三順位", "containment-front": "車頭封鎖", "containment-rear": "車尾封鎖", unavailable:"翻覆不可用" };
 export const COMMAND_LABELS: Record<RadioCommand, string> = { "request-pit": "請求 PIT 授權", "prepare-pit": "準備執行 PIT", "move-up": "第二單位靠近", "block-front": "封鎖嫌犯車頭", "take-primary": "接替主追單位", terminate: "終止追逐" };
 export const RADIO_PHASE_LABELS = { received: "已接收", executing: "執行中", completed: "完成", unable: "暫時無法執行" };
 
@@ -20,6 +20,7 @@ export interface PursuitCoordinationInput {
   command?: RadioCommand | null; pitQualified: boolean; suspectStopped: boolean;
   suspectDriveable: boolean; playerDriveability: number;
   blockadePhase?: BlockadeState["phase"];
+  unit2Available?:boolean; unit3Available?:boolean;
 }
 
 export interface PursuitAssignments {
@@ -28,6 +29,12 @@ export interface PursuitAssignments {
 }
 
 export function coordinatePursuit(input: PursuitCoordinationInput): PursuitAssignments {
+  const assignment=assignAvailablePursuit(input);
+  if(input.unit2Available===false){assignment.unit2='unavailable';if(assignment.player==='secondary')assignment.player='primary';}
+  if(input.unit3Available===false)assignment.unit3='unavailable';
+  return assignment;
+}
+function assignAvailablePursuit(input:PursuitCoordinationInput):PursuitAssignments {
   if (input.command === "terminate") return { player: "primary", unit2: "secondary", unit3: "tertiary", phase: "terminated" };
   if (input.command === "block-front" && input.blockadePhase) {
     if (input.blockadePhase === "approaching" || input.blockadePhase === "holding") {

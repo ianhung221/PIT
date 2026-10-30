@@ -4,13 +4,15 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
-import { CAMERA_SETTINGS, QUALITY_SETTINGS, type CameraMode, type QualityId } from "@/lib/gameConfig";
+import { CAMERA_SETTINGS, QUALITY_SETTINGS, type CameraMode, type QualityId, type VehicleId } from "@/lib/gameConfig";
+import { mirrorCameraFrame } from "@/lib/vehicleCamera";
 import type { CarSnapshot } from "@/types/game";
 
-export function VehicleMirrors({ runtime, mode, quality = "high" }: {
+export function VehicleMirrors({ runtime, mode, quality = "high", vehicle="patrol" }: {
   runtime: MutableRefObject<{ player: CarSnapshot }>;
   mode: CameraMode;
   quality?: QualityId;
+  vehicle?: VehicleId;
 }) {
   const { gl, scene, camera } = useThree();
   const qualitySettings = QUALITY_SETTINGS[quality];
@@ -43,14 +45,6 @@ export function VehicleMirrors({ runtime, mode, quality = "high" }: {
     if (frame.current % qualitySettings.mirrorFrameSkip !== 0) return;
     group.current.visible = false;
     const car = runtime.current.player;
-    const forwardX = -Math.sin(car.yaw), forwardZ = -Math.cos(car.yaw);
-    const rightX = Math.cos(car.yaw), rightZ = -Math.sin(car.yaw);
-    const viewAngles = [0, -.36, .36];
-    const cameraOffsets = [
-      { side: 0, forward: .05, height: 1.02 },
-      { side: -.82, forward: .2, height: .82 },
-      { side: .82, forward: .2, height: .82 },
-    ];
     const cockpit = scene.getObjectByName("cockpit-view");
     const cockpitVisible = cockpit?.visible ?? false;
     const weather = scene.getObjectByName("weather-particles") as THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | undefined;
@@ -67,18 +61,10 @@ export function VehicleMirrors({ runtime, mode, quality = "high" }: {
     }
     try {
       mirrorCameras.forEach((mirrorCamera, index) => {
-        const offset = cameraOffsets[index];
-        const angle = car.yaw + viewAngles[index];
-        mirrorCamera.position.set(
-          car.x + rightX * offset.side + forwardX * offset.forward,
-          offset.height,
-          car.z + rightZ * offset.side + forwardZ * offset.forward,
-        );
-        look.set(
-          mirrorCamera.position.x + Math.sin(angle) * 28,
-          .65,
-          mirrorCamera.position.z + Math.cos(angle) * 28,
-        );
+        const frame=mirrorCameraFrame(car,vehicle,index);
+        mirrorCamera.position.set(frame.position.x,frame.position.y,frame.position.z);
+        mirrorCamera.up.set(frame.up.x,frame.up.y,frame.up.z);
+        look.set(frame.target.x,frame.target.y,frame.target.z);
         mirrorCamera.lookAt(look);
         gl.setRenderTarget(targets[index]);
         gl.render(scene, mirrorCamera);

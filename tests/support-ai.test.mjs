@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { generateRoad } from "../lib/proceduralMap.ts";
 import { makeSupportAI, roadPoint, roadCoordinate, supportSlot, stepSupportAI } from "../lib/supportUnitAI.ts";
 import { coordinatePursuit, nextTacticalCommand, tacticalFeedback } from "../lib/pursuitCoordinator.ts";
+import { RAPIER,physicalWorld,physicsSnapshot,stepVehiclePhysics } from './helpers/vehicle-world.mjs';
+import { driveVehicleTarget,vehicleTargetPedals } from '../lib/vehicleDriver.ts';
+import { normalizeAngle } from '../lib/gameRules.ts';
 const road = generateRoad("SUPPORT-TEST", "country");
 const carAt = (distance, side = 0, speed = 0) => ({ ...roadPoint(road, distance, side), speed, lateralSpeed: 0 });
 const slotFor = (command, role = "secondary", unit = 0) => supportSlot({ road, player: carAt(100, 0, 22), suspect: carAt(140, 0, 25), playerIndex: 1, suspectIndex: 1, unit, role, command });
@@ -65,4 +68,40 @@ test("front blocker keeps its passing side when the suspect has a tiny yaw offse
   const control = stepSupportAI(makeSupportAI(car.x,car.z), { car, road, index: 1, slot, dt: 1/60, grip: 1, maxSpeed: 43, neighbors: [suspect] });
   assert.ok(control.yawError < 0 && control.yawError > -.1, String(control.yawError));
   assert.ok(control.speed > 0);
+});
+
+test('wheel-driven realignment keeps obstacle stops ahead of a cautious crawl',()=>{
+  const car={...carAt(50),yaw:1.1},ai=makeSupportAI(car.x,car.z);
+  ai.mode='realigning';
+  const args={car,road,index:0,slot:slotFor(null),dt:1/60,grip:1,maxSpeed:43,neighbors:[]};
+  assert.ok(stepSupportAI(ai,args).speed>0,'a steering correction needs travel');
+  const ahead={...car,x:car.x-Math.sin(car.yaw)*6,z:car.z-Math.cos(car.yaw)*6};
+  assert.equal(stepSupportAI(ai,{...args,neighbors:[ahead]}).speed,0,'do not drive through a blocked lane to align');
+});
+
+test('all wheel-driven AI models converge on forward/reverse heading and brake before changing gear',async()=>{
+  await RAPIER.init();
+  for(const kind of ['patrol','suv','suspect'])for(const gear of [1,-1]){
+    const sim=physicalWorld(kind),vehicle=sim.vehicle;
+    try {
+      for(let i=0;i<120;i++)sim.step();
+      for(let i=0;i<480;i++){
+        const snapshot=physicsSnapshot(vehicle);
+        driveVehicleTarget(vehicle,{speed:3*gear,yawError:normalizeAngle(.55-snapshot.yaw)},1);
+        sim.world.step();
+      }
+      const end=physicsSnapshot(vehicle);
+      assert.ok(Math.abs(end.yaw-.55)<.06,JSON.stringify({kind,gear,end}));
+      assert.ok(end.speed*gear>2.6);assert.ok(end.pose.upDot>.97);
+      const stop=vehicleTargetPedals(vehicle,{speed:-3*gear,yawError:0});
+      assert.equal(stop.throttle,0);assert.ok(stop.brake>=.35);
+      stepVehiclePhysics(vehicle,stop);sim.world.step();
+      assert.ok(physicsSnapshot(vehicle).speed*gear>0,'one brake step cannot teleport into reverse');
+      for(let i=0;i<180;i++){driveVehicleTarget(vehicle,{speed:0,yawError:.8});sim.world.step();}
+      const before=physicsSnapshot(vehicle);
+      for(let i=0;i<120;i++){driveVehicleTarget(vehicle,{speed:0,yawError:.8});sim.world.step();}
+      const parked=physicsSnapshot(vehicle);
+      assert.ok(Math.abs(parked.speed)<.01);assert.ok(Math.abs(parked.yaw-before.yaw)<.005,'cannot spin at rest');
+    }finally{sim.dispose();}
+  }
 });

@@ -1,4 +1,5 @@
 "use client";
+import {PhysicsGround} from './PhysicsGround';
 /* eslint-disable react/no-unknown-property -- R3F scene. */
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Physics } from '@react-three/rapier';
@@ -16,9 +17,11 @@ function PracticeCamera({runtime}:{runtime:MutableRefObject<PracticeRuntime>}) {
   const initialized=useRef(false);
   useFrame(({camera},dt)=>{
     const p=runtime.current.player;
-    const target=new THREE.Vector3(p.x+Math.sin(p.yaw)*12,6.4,p.z+Math.cos(p.yaw)*12);
+    const baseY=p.pose?.y??.02;
+    const target=new THREE.Vector3(p.x+Math.sin(p.yaw)*12,baseY+6.4,p.z+Math.cos(p.yaw)*12);
     camera.position.lerp(target,initialized.current?1-Math.exp(-dt*6):1);
-    camera.lookAt(p.x-Math.sin(p.yaw)*5,1,p.z-Math.cos(p.yaw)*5);
+    camera.up.set(0,1,0);
+    camera.lookAt(p.x-Math.sin(p.yaw)*5,baseY+1,p.z-Math.cos(p.yaw)*5);
     initialized.current=true;
   });
   return null;
@@ -64,9 +67,9 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
     <Canvas shadows={config.quality!=='low'} camera={{fov:56,near:.1,far:2200}} dpr={QUALITY_SETTINGS[config.quality].dpr} gl={{antialias:config.quality!=='low'}}>
       <color attach="background" args={['#aabec6']}/><fog attach="fog" args={['#aabec6',220,1700]}/>
       <ambientLight intensity={1.3}/><directionalLight position={[15,28,10]} intensity={2} castShadow={config.quality!=='low'}/>
-      <mesh rotation={[-Math.PI/2,0,0]} position={[0,-.49,0]} receiveShadow><planeGeometry args={[2000,2000]}/><meshStandardMaterial color="#454c4d"/></mesh>
       <gridHelper args={[PRACTICE.halfSize*2,200,'#829591','#626d6b']} position={[0,-.48,0]}/>
-      <Physics gravity={[0,0,0]} timeStep={1/60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
+      <Physics gravity={[0,-9.81,0]} timeStep={1/60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
+        <PhysicsGround />
         <PracticeVehicleSimulation key={run} runtime={runtime} keys={keys} config={config} zones={zones} onUpdate={update}/>
       </Physics>
       <PracticeCamera key={run} runtime={runtime}/>

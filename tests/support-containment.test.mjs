@@ -4,7 +4,8 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { makeBlockade, planBlockade, stepBlockade, blockadeControl, blockadeLocal, blockadeFeedback } from "../lib/supportContainment.ts";
 import { driveSupport } from "../lib/supportDriving.ts";
 import { coordinatePursuit, nextTacticalCommand } from "../lib/pursuitCoordinator.ts";
-import { VEHICLES } from "../lib/gameConfig.ts";
+import { physicalWorld, physicsSnapshot, stepVehiclePhysics } from './helpers/vehicle-world.mjs';
+import { chassisShapes,vehicleSpawnHeight,CHASSIS_COLLISION_GROUPS } from '../lib/vehiclePhysicsConfig.ts';
 
 const road = { seed: "BLOCK", code: "BLOCK", segments: Array.from({length: 5}, (_, index) => ({ index, id: String(index), biome: "country", x: 0, z: -index * 72, yaw: 0, length: 74, width: 11, kind: "straight", turn: 0, risk: 0 })) };
 const car = (x, forward, speed = 0, yaw = 0) => ({ x, z: -72 - forward, yaw, speed, lateralSpeed: 0 });
@@ -69,31 +70,25 @@ test("a car near the front point but beside the escape lane cannot count as held
 test("Rapier support cars pass, park front/rear and hold without touching the stationary target in clear/rain/snow", async () => {
   await RAPIER.init();
   for (const grip of [1, .78, .58]) {
-    const world = new RAPIER.World({ x: 0, y: 0, z: 0 });
+    const sim = physicalWorld();
+    sim.remove(sim.vehicle);
+    const world = sim.world;
     const input = base(), state = makeBlockade();
     try {
-      const target = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, -72));
-      const targetCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(1, .48, 2.2), target);
-      const bodies = input.supports.map((c, i) => {
-        const spec = i === 0 ? VEHICLES.patrol : VEHICLES.suv;
-        const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(c.x, 0, c.z).enabledTranslations(true, false, true).enabledRotations(false, true, false).setLinearDamping(i === 0 ? .09 : .1).setAngularDamping(i === 0 ? 1.5 : 1.6).setCcdEnabled(true));
-        world.createCollider(RAPIER.ColliderDesc.cuboid(spec.width / 2, .48, spec.length / 2).setMass(spec.mass), body);
-        return body;
-      });
+      const target = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, vehicleSpawnHeight('suspect'), -72));
+      const targetColliders = chassisShapes('suspect').map(shape=>world.createCollider(RAPIER.ColliderDesc.cuboid(...shape.halfExtents).setTranslation(...shape.position).setCollisionGroups(CHASSIS_COLLISION_GROUPS),target));
+      const vehicles = input.supports.map((c,i)=>sim.add(i===0?'patrol':'suv',c.x,c.z));
+      const bodies = vehicles.map(v=>v.body);
+      for(let i=0;i<120;i++){for(const v of vehicles)stepVehiclePhysics(v,{throttle:0,brake:0,steer:0,gear:1},grip);world.step();}
       let holdingFor = 0, contacts = 0;
       for (let i = 0; i < 60 * 40; i++) {
-        const frames = bodies.map(b => {
-          const position = b.translation(), r = b.rotation(), v = b.linvel(), yaw = 2 * Math.atan2(r.y, r.w);
-          const forwardX = -Math.sin(yaw), forwardZ = -Math.cos(yaw), rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
-          const forwardSpeed = v.x * forwardX + v.z * forwardZ, lateralSpeed = v.x * rightX + v.z * rightZ;
-          return { x: position.x, z: position.z, yaw, speed: forwardSpeed, lateralSpeed, forwardX, forwardZ, rightX, rightZ, forwardSpeed };
-        });
+        const frames = vehicles.map(physicsSnapshot);
         input.supports = frames;
         stepBlockade(state, input);
         for (let unit = 0; unit < 2; unit++) {
           const control = blockadeControl(state, unit, frames[unit], input.suspect, [input.suspect, input.player, frames[1 - unit]], road, input.dt, grip);
-          if (control) driveSupport(bodies[unit], control.yawError, control.speed, 39, input.dt, grip, frames[unit]);
-          world.contactPair(targetCollider, bodies[unit].collider(0), manifold => { if (manifold.numContacts() > 0) contacts++; });
+          driveSupport(bodies[unit], control?.yawError??0, control?.speed??0, 39, input.dt, grip, {forwardSpeed:frames[unit].speed});
+          for(const tc of targetColliders)for(let c=0;c<bodies[unit].numColliders();c++)world.contactPair(tc,bodies[unit].collider(c),manifold=>{if(manifold.numSolverContacts()>0)contacts++;});
           assert.ok(Math.abs(frames[unit].x) < 5, "support escaped the road");
         }
         world.step();
@@ -102,6 +97,6 @@ test("Rapier support cars pass, park front/rear and hold without touching the st
       }
       assert.ok(holdingFor > 2, JSON.stringify({ grip, state, cars: input.supports.map(c => blockadeLocal(input.suspect, c)) }));
       assert.equal(contacts, 0, "parking must not push the target");
-    } finally { world.free(); }
+    } finally { sim.dispose(); }
   }
 });

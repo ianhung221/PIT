@@ -97,7 +97,9 @@ export function stepSupportAI(ai: SupportAIState, input: { car: CarSnapshot; roa
   let speed = clamp(slot.speed + gap * .55, 0, maxSpeed);
   if (slot.speed < .5) speed = Math.min(speed, Math.sqrt(Math.max(0, distance - 1.8) * 6 * grip));
   const turnError = Math.abs(normalizeAngle(desiredYaw - car.yaw));
-  speed *= clamp(1 - turnError / 1.2, 0, 1);
+  // Wheels cannot realign a motionless chassis. Keep a cautious crawl only
+  // while a farther slot still requires travel; obstacle checks below win.
+  speed *= clamp(1 - turnError / 1.2, .12, 1);
   if (edge) speed = Math.min(speed, 8 * grip);
   // Follow/stop behind a nearby vehicle; this also prevents pushing a parked player.
   let obstructed = false;
@@ -122,7 +124,10 @@ export function stepSupportAI(ai: SupportAIState, input: { car: CarSnapshot; roa
       if (ahead < 0 && ahead > -7 && Math.abs(dx * Math.cos(car.yaw) - dz * Math.sin(car.yaw)) < 2.5) speed = 0;
     }
   }
-  if (ai.mode === "realigning") { desiredYaw = segment.yaw; speed = Math.abs(roadError) < .8 ? 5 * grip : 0; }
+  if (ai.mode === "realigning") {
+    desiredYaw = segment.yaw;
+    speed = obstructed ? 0 : (Math.abs(roadError) < .8 ? 5 : 2) * grip;
+  }
   const arrived = distance < 5 && Math.abs(car.speed - slot.speed) < 3 && Math.abs(roadError) < .45 && ai.mode === "driving";
   return { speed, yawError: normalizeAngle(desiredYaw - car.yaw), arrived, distance, gap, modeChanged: previousMode !== ai.mode };
 }

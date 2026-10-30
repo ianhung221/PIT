@@ -1,20 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import RAPIER from '@dimforge/rapier3d-compat';
+import {RAPIER,physicalWorld} from './helpers/vehicle-world.mjs';
 import {applyPlayerForces} from '../lib/playerVehicleForces.ts';
+import {readVehicleFrame} from '../lib/vehiclePose.ts';
 import {makePlayerDriving,resetPlayerDriving,noteDrivingKey} from '../lib/playerDriving.ts';
 import {pristineDamage,playerVehicleStatus} from '../lib/vehicleDamage.ts';
 test('disabled vehicles cannot propel forward/reverse but can brake either direction; three models and weather',async()=>{
   await RAPIER.init();
   for(const model of ['patrol','suv','interceptor'])for(const grip of [1,.78,.58])for(const speed of [-5,0,5])for(const key of ['arrowup','arrowdown']) {
-    const w=new RAPIER.World({x:0,y:0,z:0}),b=w.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setLinvel(0,0,-speed));
-    w.createCollider(RAPIER.ColliderDesc.cuboid(1,.5,2).setMass(1),b);
-    const damage={...pristineDamage(),engine:0},s=makePlayerDriving();
-    const f={forwardX:0,forwardZ:-1,rightX:1,rightZ:0,velocityX:0,velocityZ:-speed,forwardSpeed:speed,lateralSpeed:0};
-    applyPlayerForces(b,f,s,damage,new Set([key]),model,grip,1/60);w.step();
-    assert.equal(s.throttle,0);assert.equal(s.vehicleStatus.driveable,false);assert.ok(s.input[key==='arrowup'?'up':'down']);
-    if(speed===0)assert.equal(b.linvel().z,0);else {assert.equal(Math.sign(-b.linvel().z),Math.sign(speed));assert.ok(Math.abs(b.linvel().z)<Math.abs(speed));}
-    assert.match(s.vehicleStatus.reason,/引擎失能/);w.free();
+    const f=physicalWorld(model),b=f.vehicle.body,damage={...pristineDamage(),engine:0},s=makePlayerDriving();
+    try {
+      for(let i=0;i<120;i++)f.step();b.setLinvel({x:0,y:0,z:-speed},true);
+      applyPlayerForces(b,readVehicleFrame(b),s,damage,new Set([key]),model,grip,1/60);f.world.step();
+      assert.equal(s.throttle,0);assert.equal(s.vehicleStatus.driveable,false);assert.ok(s.input[key==='arrowup'?'up':'down']);
+      if(speed===0)assert.ok(Math.abs(b.linvel().z)<.001);
+      else {assert.equal(Math.sign(-b.linvel().z),Math.sign(speed));assert.ok(Math.abs(b.linvel().z)<Math.abs(speed));}
+      for(let i=0;i<120;i++){applyPlayerForces(b,readVehicleFrame(b,f.vehicle.lastYaw),s,damage,new Set([key]),model,grip,1/60);f.world.step();}
+      if(key==='arrowdown'||speed===0)assert.ok(Math.abs(readVehicleFrame(b).forwardSpeed)<.1,`${model}, grip ${grip}, speed ${speed}, ${key}`);
+      assert.match(s.vehicleStatus.reason,/引擎失能/);
+    } finally {f.dispose();}
+  }
+});
+
+test('healthy cars retain forward/reverse propulsion and brake before changing direction in all weather',async()=>{
+  await RAPIER.init();
+  for(const model of ['patrol','suv','interceptor'])for(const grip of [1,.78,.58])for(const key of ['arrowup','arrowdown']) {
+    const f=physicalWorld(model),b=f.vehicle.body,s=makePlayerDriving();
+    try {
+      for(let i=0;i<120;i++)f.step();
+      for(let i=0;i<120;i++){applyPlayerForces(b,readVehicleFrame(b,f.vehicle.lastYaw),s,pristineDamage(),new Set([key]),model,grip,1/60);f.world.step();}
+      const sign=key==='arrowup'?1:-1;
+      assert.ok(readVehicleFrame(b,f.vehicle.lastYaw).forwardSpeed*sign>1,`${model}, grip ${grip}, ${key}: no propulsion`);
+      const opposite=key==='arrowup'?'arrowdown':'arrowup';
+      applyPlayerForces(b,readVehicleFrame(b,f.vehicle.lastYaw),s,pristineDamage(),new Set([opposite]),model,grip,1/60);f.world.step();
+      assert.ok(readVehicleFrame(b,f.vehicle.lastYaw).forwardSpeed*sign>0,'First opposite input must brake, not teleport velocity into reverse');
+      for(let i=0;i<240;i++){applyPlayerForces(b,readVehicleFrame(b,f.vehicle.lastYaw),s,pristineDamage(),new Set([opposite]),model,grip,1/60);f.world.step();}
+      assert.ok(readVehicleFrame(b,f.vehicle.lastYaw).forwardSpeed*sign<-.5,`${model}, grip ${grip}, ${opposite}: failed to change direction`);
+    } finally {f.dispose();}
   }
 });
 test('status distinguishes steering failure from propulsion and reset clears accepted keys',()=>{

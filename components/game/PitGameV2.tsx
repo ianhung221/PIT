@@ -86,14 +86,14 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
     <fog attach="fog" args={[fogColor, 35 * WEATHER[config.weather].visibility, 230 * WEATHER[config.weather].visibility]} />
     <ambientLight intensity={config.time === "night" ? .3 : 1.2} />
     <directionalLight castShadow position={[15, 28, 10]} intensity={config.time === "night" ? .42 : 2.1} color={config.time === "night" ? "#85a7d9" : "#fff1cc"} />
-    <Physics gravity={[0, 0, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
+    <Physics gravity={[0, -9.81, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
       <ProceduralWorld runtime={runtime} config={config} />
       <V2VehicleSimulation config={config} cameraMode={cameraMode} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <V2Weather config={config} runtime={runtime} />
-    <CameraRig runtime={runtime} mode={cameraMode} keys={keys} />
+    <CameraRig runtime={runtime} mode={cameraMode} keys={keys} vehicle={config.vehicle} />
     <CockpitView mode={cameraMode} steering={keys} runtime={runtime} />
-    <VehicleMirrors runtime={runtime} mode={cameraMode} quality={config.quality} />
+    <VehicleMirrors runtime={runtime} mode={cameraMode} quality={config.quality} vehicle={config.vehicle} />
   </>;
 }
 

@@ -5,7 +5,7 @@ export async function verifyPracticeRepair({evaluate,command,delay,capture}) {
   const key=(key,type='keyDown',autoRepeat=false)=>command('Input.dispatchKeyEvent',{type,key,code:key,autoRepeat});
   // Explicit damaged-car fixture tests controls/UI, not the origin of a user's
   // intermittent input loss. Never set PIT diagnoses, candidates or outcomes.
-  await evaluate(`(() => {const {runtime:r,bodies}=window.__pitInspect();r.playerDamage.engine=0;r.playerDamage.alignment=0;bodies[0].setLinvel({x:0,y:0,z:0},true);bodies[1].setTranslation({x:100,y:.02,z:0},true);})()`);
+  await evaluate(`(() => {const {runtime:r,bodies}=window.__pitInspect();r.playerDamage.engine=0;r.playerDamage.alignment=0;bodies[0].setLinvel({x:0,y:0,z:0},true);bodies[1].setTranslation({x:100,y:-.31,z:0},true);})()`);
   await click('開始練習');await evaluate(`document.querySelector('.diagnostic-toggles input').click()`);
   for(const direction of ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight']) {
     await key(direction);await delay(250);
@@ -30,7 +30,7 @@ export async function verifyPracticeRepair({evaluate,command,delay,capture}) {
   let promoted=false;
   for(const f of fixtures) {
     await click('重設練習');
-    await evaluate(`(() => {const {bodies:b}=window.__pitInspect();b[0].setTranslation({x:2.05,y:.02,z:${f.z}},true);b[0].setLinvel({x:${f.vx},y:0,z:-16},true);b[1].setTranslation({x:0,y:.02,z:0},true);b[1].setLinvel({x:0,y:0,z:-12},true);})()`);
+    await evaluate(`(() => {const {bodies:b}=window.__pitInspect();b[0].setTranslation({x:2.05,y:-.31,z:${f.z}},true);b[0].setLinvel({x:${f.vx},y:0,z:-16},true);b[1].setTranslation({x:0,y:-.31,z:0},true);b[1].setLinvel({x:0,y:0,z:-12},true);})()`);
     await click('開始練習');await key('ArrowLeft');await key('ArrowUp');await delay(1600);await key('ArrowLeft','keyUp');await key('ArrowUp','keyUp');
     const s=await read(),events=s.diagnostics.events;
     const upgraded=events.find(e=>e.evidence?.status==='evaluating'&&events.some(first=>first.attempt===e.attempt&&first.evidence?.classification==='scrape'&&first.at<=e.at));

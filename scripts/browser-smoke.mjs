@@ -10,6 +10,9 @@ import { verifyControl } from "./browser-control.mjs";
 import { verifyPlayerDriving } from "./browser-player-driving.mjs";
 import { verifyPractice } from './browser-practice.mjs';
 import { verifyPracticeRepair } from './browser-practice-repair.mjs';
+import { verifyVehicleIntegration } from './browser-vehicle-integration.mjs';
+import { verifyVehicleRollover } from './browser-vehicle-rollover.mjs';
+import { verifyVehiclePit } from './browser-vehicle-pit.mjs';
 import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
@@ -180,7 +183,20 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (practiceCheck) {
+  if (process.env.PIT_TEST_VEHICLE_PIT === 'true') {
+    if(!worldCheck)throw Error('Vehicle PIT test requires PIT_TEST_WORLD=true');
+    await verifyVehiclePit({evaluate,command,delay,capture,waitFor});
+    if(runtimeErrors.length||failedRequests.length)throw Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
+  } else if (process.env.PIT_TEST_ROLLOVER === 'true') {
+    if(!worldCheck)throw Error('Rollover test requires PIT_TEST_WORLD=true');
+    await verifyVehicleRollover({evaluate,command,delay,capture,waitFor,practice:practiceCheck});
+    if(runtimeErrors.length||failedRequests.length)throw Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
+  } else if (process.env.PIT_TEST_VEHICLE_PHYSICS === 'true') {
+    if (!worldCheck) throw new Error('Vehicle physics test requires PIT_TEST_WORLD=true');
+    await verifyVehicleIntegration({evaluate,command,delay,capture,waitFor,practice:practiceCheck});
+    if(runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
+    console.log('vehicle integration: all browser fixtures passed', url);
+  } else if (practiceCheck) {
     if(process.env.PIT_TEST_REPAIR==='true')await verifyPracticeRepair({evaluate,command,delay,capture});
     await verifyPractice({evaluate,command,delay,capture,waitFor});
     if(runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
@@ -297,7 +313,7 @@ try {
         for (let i=0;i<4;i++) {
           const offset = [-12, 18, -26, -40][i];
           const x = seg.x + fx * (-36 + offset), z = seg.z + fz * (-36 + offset);
-          bodies[i].setTranslation({x,y:.02,z},true);
+          bodies[i].setTranslation({x,y:-.325,z},true);
           bodies[i].setRotation({x:0,y:Math.sin(seg.yaw/2),z:0,w:Math.cos(seg.yaw/2)},true);
           bodies[i].setLinvel({x:fx*30,y:0,z:fz*30},true);
           bodies[i].setAngvel({x:0,y:0,z:0},true);
@@ -323,7 +339,7 @@ try {
       const indices=[2,20,10,11];
       for(let i=0;i<4;i++) {
         const seg=r.road.segments[indices[i]];
-        bodies[i].setTranslation({x:seg.x,y:.02,z:seg.z},true);
+        bodies[i].setTranslation({x:seg.x,y:-.325,z:seg.z},true);
         bodies[i].setRotation({x:0,y:Math.sin(seg.yaw/2),z:0,w:Math.cos(seg.yaw/2)},true);
         bodies[i].setLinvel({x:0,y:0,z:0},true); bodies[i].setAngvel({x:0,y:0,z:0},true);
         Object.assign(cars[i],{x:seg.x,z:seg.z,yaw:seg.yaw,speed:0,lateralSpeed:0});

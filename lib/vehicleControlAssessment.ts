@@ -1,4 +1,6 @@
 import { SUSPECT, vehicleColliderStrips, type VehicleId } from "./gameConfig.ts";
+import { chassisShapes } from './vehiclePhysicsConfig.ts';
+import { vehicleWorldPoint } from './vehiclePose.ts';
 import type { CarSnapshot } from "../types/game.ts";
 import type { RoadPoint, RoadSection } from "./roadGeometry.ts";
 
@@ -47,6 +49,11 @@ function rectangle(p: Point,yaw: number,halfWidth: number,halfLength: number): P
 }
 /** Exact compound-strip outlines shared with Rapier, not decorative meshes. */
 export function controlFootprint(car: ControlCar, padding=0): Polygon[] {
+  if(car.pose)return chassisShapes(car.model).map(shape=>hull([-1,1].flatMap(x=>[-1,1].flatMap(y=>[-1,1].map(z=>vehicleWorldPoint(car,{
+    x:shape.position[0]+x*(shape.halfExtents[0]+padding),
+    y:shape.position[1]+y*shape.halfExtents[1],
+    z:shape.position[2]+z*(shape.halfExtents[2]+padding),
+  }))))));
   return vehicleColliderStrips(car.model).map(strip=>rectangle({x:car.x+Math.sin(car.yaw)*strip.z,z:car.z+Math.cos(car.yaw)*strip.z},car.yaw,strip.halfWidth+padding,strip.halfLength+padding));
 }
 export function controlRoadGeometry(sections: readonly RoadSection[]) {
@@ -56,7 +63,8 @@ export function controlRoadGeometry(sections: readonly RoadSection[]) {
   }));
 }
 type Geometry = ReturnType<typeof controlRoadGeometry>;
-const stationary = (c: ControlCar) => Math.hypot(c.speed,c.lateralSpeed)<CONTROL.blockerSpeed && Math.abs(c.angularSpeed)<CONTROL.angularSpeed;
+const supported=(c:ControlCar)=>!c.pose||c.pose.groundedWheels>=2||c.pose.rolloverDisabled;
+const stationary = (c: ControlCar) => supported(c)&&Math.hypot(c.speed,c.lateralSpeed)<CONTROL.blockerSpeed && Math.abs(c.angularSpeed)<CONTROL.angularSpeed;
 
 /** A sufficient (not necessary) enclosure certificate. Every vehicle contains
  * this orientation-independent disk. Inflate real obstacles by an INSCRIBED
@@ -93,11 +101,13 @@ export function hasControlEnclosure(origin: Point, obstacles: Polygon[]): boolea
 export function assessVehicleControl(suspect: ControlCar, blockers: readonly ControlCar[], geometry: Geometry, maxNodes:number=CONTROL.maxNodes): ControlAssessment {
   const answer=(status:ControlAssessment["status"],reason:string,nodes=0):ControlAssessment=>({status,reason,nodes});
   if(![suspect,...blockers].every(c=>[c.x,c.z,c.yaw,c.speed,c.lateralSpeed,c.angularSpeed].every(Number.isFinite))) return answer("uncertain","車輛資料不足，仍在評估");
+  if(!supported(suspect))return answer('moving','嫌犯尚未穩定接地，不能確認攔停');
   if(Math.hypot(suspect.speed,suspect.lateralSpeed)>=CONTROL.speed || Math.abs(suspect.angularSpeed)>=CONTROL.angularSpeed) return answer("moving","嫌犯仍在移動或旋轉");
+  if(suspect.pose&&!suspect.pose.headingValid)return answer('uncertain','翻覆車身不使用平面出口推算；等待物理失能確認');
   const local=geometry.filter(g=>g.surface.some(p=>distance(p,suspect)<100));
   if(!local.some(g=>inside(suspect,g.surface))) return answer("uncertain","道路邊界資料不足，仍在評估");
   const walls=local.flatMap(g=>g.walls);
-  const nearby=blockers.filter(c=>distance(c,suspect)<18);
+  const nearby=blockers.filter(c=>supported(c)&&distance(c,suspect)<18);
   const obstacles=[...walls,...nearby.flatMap(c=>controlFootprint(c))];
   const valid=(car:ControlCar,padding=0)=>local.some(g=>inside(car,g.surface)) && !controlFootprint(car,padding).some(p=>obstacles.some(o=>intersection(p,o)));
   if(!valid(suspect,-.025)) return answer("uncertain","車身接觸／交疊尚在解析，仍在評估");
@@ -114,6 +124,7 @@ export function assessVehicleControl(suspect: ControlCar, blockers: readonly Con
       for(let i=0;i<10;i++) {
         const ds=direction*CONTROL.step/10, da=ds*curve/CONTROL.radius;
         car={...car,x:car.x-Math.sin(car.yaw+da/2)*ds,z:car.z-Math.cos(car.yaw+da/2)*ds,yaw:car.yaw+da};
+        if(car.pose){const q=car.pose.quaternion,s=Math.sin(da/2),c=Math.cos(da/2);car.pose={...car.pose,quaternion:{x:c*q.x+s*q.z,y:c*q.y+s*q.w,z:c*q.z-s*q.x,w:c*q.w-s*q.y}};}
         if(!valid(car,.065)) { clear=false;break; }
       }
       if(!clear) continue;

@@ -23,7 +23,7 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
       const seg=s.road.segments[index], yaw=seg.yaw+yawOffset;
       const x=seg.x+Math.cos(seg.yaw)*side-Math.sin(seg.yaw)*longitudinal;
       const z=seg.z-Math.sin(seg.yaw)*side-Math.cos(seg.yaw)*longitudinal;
-      body.setTranslation({x,y:.02,z},true); body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
+      body.setTranslation({x,y:-.325,z},true); body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
       body.setLinvel({x:-Math.sin(yaw)*speed,y:0,z:-Math.cos(yaw)*speed},true); body.setAngvel({x:0,y:0,z:0},true);
       Object.assign(snapshot,{x,z,yaw,speed,lateralSpeed:0});
     };

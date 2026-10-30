@@ -146,7 +146,7 @@ export function logRuntimeEvent(runtime: V2Runtime, message: string) {
 export function refreshPitAuthorization(runtime: V2Runtime, config: MissionConfig, suspect = runtime.suspect, force = false) {
   if (!runtime.authorizationRequested || (!force && runtime.elapsed - runtime.authorizationCheckedAt < .25)) return;
   const segment = runtime.road.segments[runtime.suspectRoadIndex];
-  const supportUnits = runtime.supports.filter(c => Math.hypot(c.x - suspect.x, c.z - suspect.z) < 150).length;
+  const supportUnits = runtime.supports.filter(c => !c.pose?.rolloverDisabled&&Math.hypot(c.x - suspect.x, c.z - suspect.z) < 150).length;
   const decision = evaluatePitRisk(missionPitRisk(config, segment, suspect, supportUnits));
   const reason = decision.reasons.join("、");
   if (runtime.authorization !== decision.authorization || runtime.authorizationReason !== reason) {

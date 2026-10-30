@@ -8,6 +8,8 @@ import * as THREE from "three";
 import type { RoadSegment } from "@/types/game";
 import { SCENES, type MissionConfig } from "@/lib/gameConfig";
 import { alongRoad, loadedRoadIndices, roadSections, type RoadPoint, type RoadSection } from "@/lib/roadGeometry";
+import { BARRIER_COLLISION_GROUPS, ROAD_SURFACE_Y, SHOULDER_SURFACE_Y } from "@/lib/groundPhysics";
+import { PhysicsGround } from "./PhysicsGround";
 import type { V2Runtime } from "./v2Runtime";
 
 function quad(vertices: number[], a: RoadPoint, b: RoadPoint, c: RoadPoint, d: RoadPoint, height: number) {
@@ -34,17 +36,17 @@ function Barrier({ start, end }: { start: RoadPoint; end: RoadPoint }) {
   const rotation: [number, number, number] = [0, Math.atan2(-(end.x - start.x), -(end.z - start.z)), 0];
   return <RigidBody type="fixed" colliders={false} position={position} rotation={rotation}>
     <mesh><boxGeometry args={[.32, .62, length]} /><meshStandardMaterial color="#7d898d" metalness={.65} roughness={.38} /></mesh>
-    <CuboidCollider args={[.16, .31, length / 2]} friction={.74} restitution={.06} />
+    <CuboidCollider args={[.16, .31, length / 2]} friction={.74} restitution={.06} collisionGroups={BARRIER_COLLISION_GROUPS} />
   </RigidBody>;
 }
 
 function RoadTile({ segment, section, config }: { segment: RoadSegment; section: RoadSection; config: MissionConfig }) {
   const surfaces = useMemo(() => {
     const pavement: number[] = [], markings: number[] = [], ground: number[] = [];
-    quad(pavement, section.startLeft, section.startRight, section.endLeft, section.endRight, -.505);
+    quad(pavement, section.startLeft, section.startRight, section.endLeft, section.endRight, ROAD_SURFACE_Y);
     const startScale = 100 / (segment.startWidth ?? segment.width);
     const endScale = 100 / (segment.endWidth ?? segment.width);
-    quad(ground, alongRoad(section, 0, -startScale), alongRoad(section, 0, startScale), alongRoad(section, 1, -endScale), alongRoad(section, 1, endScale), -.6);
+    quad(ground, alongRoad(section, 0, -startScale), alongRoad(section, 0, startScale), alongRoad(section, 1, -endScale), alongRoad(section, 1, endScale), SHOULDER_SURFACE_Y);
     for (const side of [-.97, .97]) strip(markings, alongRoad(section, 0, side), alongRoad(section, 1, side), .12, -.49);
     // Six 6 m dashes per 72 m segment. One merged mesh, including highway lanes.
     for (const lane of segment.biome === "highway" ? [-1 / 3, 1 / 3] : [0]) {
@@ -57,7 +59,7 @@ function RoadTile({ segment, section, config }: { segment: RoadSegment; section:
   const snowy = config.weather === "snow", wet = config.weather === "rain";
   return <group name={`road-segment-${segment.index}`}>
     <mesh receiveShadow geometry={surfaces.pavement}><meshStandardMaterial color={snowy ? "#8d9695" : "#252a2c"} roughness={wet ? .2 : .86} metalness={wet ? .38 : 0} /></mesh>
-    <mesh receiveShadow geometry={surfaces.ground}><meshStandardMaterial color={snowy ? "#c4cbca" : scene.ground} /></mesh>
+    <mesh receiveShadow geometry={surfaces.ground}><meshStandardMaterial color={snowy ? "#c4cbca" : scene.ground} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} /></mesh>
     <mesh geometry={surfaces.markings}><meshStandardMaterial color="#ddd8be" /></mesh>
     <Barrier start={section.startLeft} end={section.endLeft} />
     <Barrier start={section.startRight} end={section.endRight} />
@@ -85,5 +87,8 @@ export function ProceduralWorld({ runtime, config }: { runtime: MutableRefObject
     lastKey.current = key;
     setIndices(loadedRoadIndices(road.segments.length, cars));
   });
-  return <group name="procedural-world">{indices.map(index => <RoadTile key={road.segments[index].id} segment={road.segments[index]} section={sections[index]} config={config} />)}</group>;
+  return <>
+    <PhysicsGround sections={sections} color={config.weather === "snow" ? "#c4cbca" : SCENES[config.scene].ground} />
+    <group name="procedural-world">{indices.map(index => <RoadTile key={road.segments[index].id} segment={road.segments[index]} section={sections[index]} config={config} />)}</group>
+  </>;
 }

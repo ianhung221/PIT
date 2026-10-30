@@ -132,9 +132,15 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
   const targetLocal = blockadeLocal(a, target);
   const reverse = (unit === 1 || state.stages[0] === 3 || state.stages[0] === 0)
     && local.forward > targetLocal.forward + .25;
-  const targetYaw = distance < .65 ? a.yaw : Math.atan2(-(target.x - car.x), -(target.z - car.z)) + (reverse ? Math.PI : 0);
+  // Follow the final parking axis while there is still room to straighten.
+  // Aiming at an ever-closer point previously left an oblique chassis which
+  // only the removed in-place yaw motor could correct after stopping.
+  const finalApproach = unit === 1 || state.stages[0] === 3;
+  const targetYaw = finalApproach
+    ? a.yaw + Math.atan(local.side / 2) * (reverse ? -1 : 1)
+    : distance < .65 ? a.yaw : Math.atan2(-(target.x - car.x), -(target.z - car.z)) + (reverse ? Math.PI : 0);
   const yawError = normalizeAngle(targetYaw - car.yaw);
-  let speed = Math.min(reverse ? 2.8 : 6, distance * 1.1, Math.sqrt(Math.max(0, distance - .25) * 5 * grip)) * clamp(1 - Math.abs(yawError) / .85, 0, 1) * (reverse ? -1 : 1);
+  let speed = Math.min(reverse ? 2.8 : 6, distance * 1.1, Math.sqrt(Math.max(0, distance - .25) * 5 * grip)) * clamp(1 - Math.abs(yawError) / .85, .16, 1) * (reverse ? -1 : 1);
   let blocked = false;
   // Project both car footprints along our actual motion, including a swept stopping margin.
   for (const other of neighbors) {

@@ -7,6 +7,7 @@ export interface PhysicalContact {
   localX: number; localZ: number; playerLocalX: number; playerLocalZ: number;
   normalSide: number; closingSpeed: number; normalSpeed: number; headingDelta: number;
   halfWidth: number; halfLength: number; playerHalfLength: number; authorized: boolean;
+  localY?:number; playerLocalY?:number; surfaceValid?:boolean; headingValid?:boolean;
 }
 export type ContactClassification = "scrape" | "effective" | "excessive" | "unsafe";
 export interface ContactFeedback { classification: ContactClassification; message: string; at: number }
@@ -18,6 +19,7 @@ export function localPoint(car: Pick<CarSnapshot, "x" | "z" | "yaw">, point: {x:
 export function classifyPhysicalContact(c: PhysicalContact): {classification: ContactClassification; reason: string} {
   if (![c.localX,c.localZ,c.playerLocalZ,c.normalSide,c.closingSpeed,c.normalSpeed].every(Number.isFinite)) return { classification: "scrape", reason: "接觸資料不足" };
   if (c.closingSpeed > V2_PIT.maxClosingSpeed || c.normalSpeed > 8) return { classification: "excessive", reason: "過度撞擊：相對速度或側向撞擊過高" };
+  if(c.headingValid===false||c.surfaceValid===false)return {classification:'scrape',reason:'車身姿態或接觸高度不符：翻滾、車頂與底盤碰撞不算 PIT 側面接觸'};
   const zone = c.localZ >= c.halfLength * V2_PIT.rearStart && c.localZ <= c.halfLength + .08
     && Math.abs(c.localX) >= c.halfWidth * .65 && Math.abs(c.localX) <= c.halfWidth + .08
     && c.playerLocalZ <= -c.playerHalfLength * .45 && c.playerLocalZ >= -c.playerHalfLength - .08
@@ -29,10 +31,10 @@ export function classifyPhysicalContact(c: PhysicalContact): {classification: Co
   return { classification: "effective", reason: "後側四分之一接觸成立，評估實際失控" };
 }
 
-export function physicalPitOutcome(startYaw: number, yaw: number, startPlanarSpeed: number, planarSpeed: number, lateralSpeed: number, contactTime: number) {
+export function physicalPitOutcome(startYaw: number, yaw: number, startPlanarSpeed: number, planarSpeed: number, lateralSpeed: number, contactTime: number, headingValid=true) {
   const result = evaluatePitOutcome(startYaw, yaw, startPlanarSpeed, planarSpeed, lateralSpeed);
   // Forward speed alone drops when a car rotates; use actual planar speed.
-  const success = result.success && contactTime >= V2_PIT.minContactTime && startPlanarSpeed > 4;
+  const success = headingValid && result.success && contactTime >= V2_PIT.minContactTime && startPlanarSpeed > 4;
   return { ...result, progress: success ? 100 : Math.min(99, result.progress), success };
 }
 

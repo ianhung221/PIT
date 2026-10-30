@@ -5,7 +5,7 @@ export async function verifyPractice({evaluate,command,delay,capture,waitFor}) {
   const key=async(k,type='keyDown')=>command('Input.dispatchKeyEvent',{type,key:k,code:k.length===1?'Key'+k.toUpperCase():k});
   const tap=async k=>{await key(k);await key(k,'keyUp');await delay(150);};
   const shape=await evaluate(`(() => {const s=window.__pitInspect();return {bodies:s.bodies.length,colliders:s.bodies.reduce((n,b)=>n+b.numColliders(),0),road:!!s.runtime.road,supports:!!s.runtime.supports}})()`);
-  assert.deepEqual(shape,{bodies:2,colliders:6,road:false,supports:false});
+  assert.deepEqual(shape,{bodies:2,colliders:8,road:false,supports:false});
   assert.equal((await state()).elapsed,0);assert.equal((await state()).phase,'ready');
   await capture('practice-ready');
   await click('開始練習');await delay(700);
@@ -21,9 +21,9 @@ export async function verifyPractice({evaluate,command,delay,capture,waitFor}) {
   // candidate, success, diagnosis or result. Production solver decides.
   const place=async(center=false)=>evaluate(`(() => {
     const {bodies}=window.__pitInspect();
-    bodies[0].setTranslation({x:2.05,y:.02,z:${center?0:3.9}},true);
+    bodies[0].setTranslation({x:2.05,y:-.31,z:${center?0:3.9}},true);
     bodies[0].setLinvel({x:-7,y:0,z:-16},true);
-    bodies[1].setTranslation({x:0,y:.02,z:0},true);
+    bodies[1].setTranslation({x:0,y:-.31,z:0},true);
     bodies[1].setLinvel({x:0,y:0,z:-12},true);
   })()`);
   await place();await click('開始練習');
@@ -47,13 +47,13 @@ export async function verifyPractice({evaluate,command,delay,capture,waitFor}) {
   await click('立即再練');assert.equal((await state()).phase,'ready');assert.equal((await state()).diagnostics.lastSuccess,null);
   if(process.env.PIT_TEST_PRACTICE_LONG==='true') {
     await click('重設練習');
-    await evaluate(`(() => {const {bodies}=window.__pitInspect();bodies[0].setTranslation({x:2.4,y:.02,z:910},true);bodies[1].setTranslation({x:0,y:.02,z:900},true);})()`);
+    await evaluate(`(() => {const {bodies}=window.__pitInspect();bodies[0].setTranslation({x:2.4,y:-.31,z:910},true);bodies[1].setTranslation({x:0,y:-.31,z:900},true);})()`);
     await click('開始練習');await tap('f');
     for(let i=0;i<130;i++){const s=await state();assert.equal(s.phase,'playing');if(s.elapsed>91)break;await delay(1000);}
     assert.ok((await state()).elapsed>91);console.log('practice: actual simulation exceeded 91 seconds without countdown');
     await capture('practice-no-countdown');
   }
-  await click('重設練習');await evaluate(`window.__pitInspect().bodies[0].setTranslation({x:1001,y:.02,z:0},true)`);await click('開始練習');
+  await click('重設練習');await evaluate(`window.__pitInspect().bodies[0].setTranslation({x:1001,y:-.31,z:0},true)`);await click('開始練習');
   await waitFor(`window.__pitInspect().runtime.phase==='outside'`,'practice-boundary');
   await command('Emulation.setDeviceMetricsOverride',{width:375,height:667,deviceScaleFactor:1,mobile:false});await delay(250);
   const layout=await evaluate(`(() => {const buttons=[...document.querySelectorAll('.debrief-actions button')];return {fits:document.documentElement.scrollWidth<=innerWidth,buttons:buttons.every(b=>{const r=b.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth})}})()`);
