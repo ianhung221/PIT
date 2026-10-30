@@ -1,6 +1,6 @@
 # PIT Unit Walkthrough
 
-## V3 第二批：共用車輛物理、轉彎與翻覆（2026-10-30，發布驗證中）
+## V3 第二批：共用車輛物理、轉彎與翻覆（2026-10-30 已發布）
 
 - **實作範圍：**玩家、嫌犯、02／03 後援及練習目標共用 Rapier 0.19.2 四輪射線／懸吊核心。車身可俯仰、側傾、離地與翻覆；轉向改由輪角與抓地力產生，移除每幀指定 yaw、清除側傾及強制縮放速度的舊控制。三車參數依現有模型量測與遊戲調校，並非品牌認證動力學。
 - **低速與煞車：**三車低速前進／倒車及左右方向通過。最大車身外緣迴轉半徑：巡邏車 6.489m、跑車 6.974m、SUV 6.473m；均完成 20km/h、半徑 8m、寬 4.5m 的測試彎道，沒有靠護欄校正。晴／雨／雪相同起速的煞停距離依序增加；27 組巡航條件（三車 × 40／80／100km/h × 三種抓地）符合 ±3km/h。
@@ -13,9 +13,11 @@
 - **工程結果：**116 項自動測試通過；Pages 正式靜態建置通過。型別檢查修復原有 CameraRig 三項錯誤，剩原 Cloudflare 三項（`cloudflare:workers`、`Fetcher`、`D1Database`），沒有本批新增錯誤。Windows Vinext 結束時的 libuv assertion 仍存在，包裝器以新產物完整性檢查判定建置成功，不宣稱工具問題已修好。
 - **效能目標未達、已定位及優化：**同機、同地圖、同高畫質，舊／新各三次 60 秒，約 10,900 個固定物理步。完整步驟 p95：舊版 0.4ms → 初版新核心 0.9ms → 第一輪優化 0.7ms → 最終 0.6ms。相對初版降低約 33%，但相對舊版仍增加 0.2ms／50%，**未達原訂增幅 ≤20% 目標**。已減少固定資料配置、重複姿態／懸吊讀取、遠距碰撞查詢與未變動輪胎參數寫入，未犧牲物理判定。解算器本身 p95 維持約 0.2ms；完整步驟 median 0.2 → 0.3ms。Edge 使用 `--disable-gpu`，畫面更新間隔 median 99.9 → 149.9ms、p95 116.7 → 166.8ms；這是無 GPU 環境的呈現間隔，不是隔離渲染成本，也不是玩家實機 FPS 保證。依原計畫超標處置完成定位／優化／揭露，保留後續實機效能驗收，沒有把目標改成通過。
 - **最後回歸：**最終核心三車練習、正式任務真實 PIT 通過；先前失能／失焦重複鍵與同段擦碰轉候選再合格通過；再次完成 20 次重設及 20 次離開重進無資源累積。最後 ESLint 通過。
-- **目前交付狀態：**本機驗證完成，接續整批提交、Actions 與正式站複驗；尚未宣稱發布成功。第二批玩家驗收新增 `V3-009～017`，未代填玩家結果；原 V2／V3 回報、影片與圖片保留。
+- **發布及正式站：**程式 `89f0faa` 已發布至 [PIT Unit](https://ianhung221.github.io/PIT/)；[Actions 41029781737](https://github.com/ianhung221/PIT/actions/runs/41029781737) 的 lint、測試、靜態建置與部署均成功。正式站一般任務實際授權／PIT，以及練習成功、繼續觀察、錯誤接觸、立即再練、出界／窄螢幕及返回設定通過。本機 4174 預覽伺服器已關閉。
+- **瀏覽器限制紀錄：**首次正式站練習自動檢查在重設後準備畫面停止回傳，獨立偵錯連線仍可讀取狀態。只結束該次專用瀏覽器與腳本後，以乾淨分頁完整重測通過；沒有修改遊戲來繞過驗證。停滯根因未確定，不宣稱已修復所有 Windows／瀏覽器問題。
+- **玩家驗收：**請填 `v3_acceptance_test.md` 的 `V3-009～017`；代理未代填玩家結果。原 V2／V3 回報、影片與圖片保留。第三批尚未開始；效能目標未達與後援延後範圍如上。
 
-本機證據：`work/2d-optimized2-tests.log`、`work/2d-mission-pit.log`、`work/2d-practice-browser.log`、`work/2d-control-browser.log`、`work/2c-browser-rollover-visible.log`、`work/2c-browser-practice-rollover.log`、`work/vehicle-core/report.json`、`work/physics-benchmark/`；以上驗證產物不加入發布檔案。
+本機證據：`work/2d-optimized2-tests.log`、`work/2d-final-lifecycle.log`、`work/2d-final-practice-repair.log`、`work/2d-live-practice-retry.log`、`work/2d-live-mission-pit.log`、`work/2d-control-browser.log`、`work/2c-browser-rollover-visible.log`、`work/2c-browser-practice-rollover.log`、`work/vehicle-core/report.json`、`work/physics-benchmark/`。首次停滯保留於 `work/2d-live-practice.log`／`work/2d-live-inspect.log`；以上驗證產物不加入發布檔案。
 
 ## V3 第一批補修：車況與 PIT 接觸一致性（2026-10-26 實作／2026-10-27 發布）
 
