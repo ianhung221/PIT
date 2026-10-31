@@ -1,3 +1,4 @@
+export type SuspectDifficulty = "basic" | "normal" | "advanced";
 export type SceneId = "city" | "country" | "highway";
 export type WeatherId = "clear" | "rain" | "snow";
 export type TimeId = "day" | "night";
@@ -6,6 +7,8 @@ export type CameraMode = "chase" | "driver" | "auto";
 export type QualityId = "low" | "medium" | "high";
 
 export interface MissionConfig {
+  difficulty?: SuspectDifficulty;
+  behaviorSeed?: string;
   scene: SceneId;
   weather: WeatherId;
   time: TimeId;

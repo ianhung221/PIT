@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import type { QualityId, SceneId, TimeId, VehicleId, WeatherId } from "@/lib/gameConfig";
+import type { QualityId, SceneId, TimeId, VehicleId, WeatherId, SuspectDifficulty } from "@/lib/gameConfig";
 import { makeMissionSeed } from "@/lib/seededRandom";
 import type { GameSession } from '@/lib/practiceConfig';
 
@@ -35,13 +35,16 @@ export function HomeClient() {
   const [quality, setQuality] = useState<QualityId>("high");
   const [seed, setSeed] = useState(() => makeMissionSeed());
   const [mode,setMode]=useState<'mission'|'practice'>('mission');
+  const [difficulty,setDifficulty]=useState<SuspectDifficulty>('normal');
+  const [practiceSpeed,setPracticeSpeed]=useState<30|50|70>(50);
+  const [practiceWeather,setPracticeWeather]=useState<WeatherId>('clear');
   const [mission, setMission] = useState<GameSession | null>(null);
 
   if (mission?.mode==='mission') return <PitGame config={mission.config} onExit={() => setMission(null)} />;
   if (mission?.mode==='practice') return <PracticeGame config={mission.config} onExit={()=>setMission(null)}/>;
 
   return (
-    <main className={`briefing briefing--${scene} briefing--${mode==='practice'?'day':time} briefing--${mode==='practice'?'clear':weather}`}>
+    <main className={`briefing briefing--${scene} briefing--${mode==='practice'?'day':time} briefing--${mode==='practice'?practiceWeather:weather}`}>
       <div className="scene-preview" aria-hidden="true">
         <div className="sky-glow" /><div className="cityline cityline--back" /><div className="cityline cityline--front" />
         {scene === "country" && <div className="countryline"><i /><i /><i /><i /><i /></div>}
@@ -49,7 +52,7 @@ export function HomeClient() {
         <div className="road"><span className="lane lane--left" /><span className="lane lane--right" /></div>
         <div className="suspect-car"><span /></div>
         <div className="police-car"><span className="light light--red" /><span className="light light--blue" /></div>
-        {mode==='mission'&&weather === "rain" && <div className="rain" />}{mode==='mission'&&weather === "snow" && <div className="snow" />}<div className="scanlines" />
+        {(mode==='mission'?weather:practiceWeather) === "rain" && <div className="rain" />}{(mode==='mission'?weather:practiceWeather) === "snow" && <div className="snow" />}<div className="scanlines" />
       </div>
       <header className="topbar">
         <div className="brand-mark"><span>PIT</span> UNIT</div><div className="status"><i /> DISPATCH CONNECTED</div>
@@ -61,7 +64,9 @@ export function HomeClient() {
       </section>
       <section className="setup-panel" aria-label="追逐任務設定">
         <div className="panel-heading"><span>MISSION CONFIGURATION</span><strong>任務設定</strong></div>
-        <fieldset><legend>模式</legend><div className="segmented"><button aria-pressed={mode==='mission'} className={mode==='mission'?'active':''} onClick={()=>setMode('mission')}>一般任務</button><button className={mode==='practice'?'active':''} aria-pressed={mode==='practice'} onClick={()=>setMode('practice')}>PIT 練習</button></div><small>{mode==='mission'?'V2 任務：90 秒追捕，玩家與兩台後援；PIT 與攔停分開評估。':'基本練習場：晴朗／白天，兩車 50 km/h，無後援、無倒數。'}</small></fieldset>
+        <fieldset><legend>模式</legend><div className="segmented"><button aria-pressed={mode==='mission'} className={mode==='mission'?'active':''} onClick={()=>setMode('mission')}>一般任務</button><button className={mode==='practice'?'active':''} aria-pressed={mode==='practice'} onClick={()=>setMode('practice')}>PIT 練習</button></div><small>{mode==='mission'?'90 秒追捕，玩家與兩台後援；PIT 與攔停分開評估。':'封閉空地、白天、無後援及倒數。'}</small></fieldset>
+        <fieldset><legend>嫌犯難度</legend><div className="segmented segmented--three">{(['basic','normal','advanced'] as const).map(level=><button key={level} aria-pressed={difficulty===level} className={difficulty===level?'active':''} onClick={()=>setDifficulty(level)}>{level==='basic'?'基礎':level==='normal'?'一般':'進階'}</button>)}</div><small>{difficulty==='basic'?'練習場定速直行；任務沿道路行駛。':difficulty==='normal'?'目標偶爾改變行駛位置。':'目標察覺接近後可能變線或減速，反應有延遲與失誤。'}</small></fieldset>
+        {mode==='practice'&&<div className="split-fields"><fieldset><legend>練習初速</legend><select aria-label="練習初速" value={practiceSpeed} onChange={e=>setPracticeSpeed(Number(e.target.value) as 30|50|70)}>{[30,50,70].map(v=><option key={v} value={v}>{v} km/h</option>)}</select></fieldset><fieldset><legend>練習天候</legend><select aria-label="練習天候" value={practiceWeather} onChange={e=>setPracticeWeather(e.target.value as WeatherId)}>{weathers.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></fieldset></div>}
         {mode==='mission'&&<>
         <fieldset><legend><b>01</b> 作戰區域</legend><div className="option-grid option-grid--three">
           {scenes.map((item) => <button key={item.id} className={scene === item.id ? "option active" : "option"} onClick={() => setScene(item.id as SceneId)}><span className="option-code">{item.icon}</span><strong>{item.label}</strong><small>{item.detail}</small></button>)}
@@ -76,7 +81,7 @@ export function HomeClient() {
         </div></fieldset>
         {mode==='mission'&&<fieldset className="seed-field"><legend><b>05</b> 任務地圖代碼</legend><div><input value={seed} maxLength={32} onChange={(event) => setSeed(event.target.value.toUpperCase())} aria-label="任務地圖代碼" /><button type="button" onClick={() => setSeed(makeMissionSeed())}>隨機</button></div><small>相同代碼會重現相同道路排列</small></fieldset>}
         <fieldset className="quality-field"><legend><b>06</b> 畫面品質</legend><div className="segmented segmented--three">{(["low", "medium", "high"] as QualityId[]).map((value) => <button key={value} className={quality === value ? "active" : ""} onClick={() => setQuality(value)}>{value === "low" ? "低" : value === "medium" ? "中" : "高"}</button>)}</div><small>低畫質會關閉側鏡與即時陰影</small></fieldset>
-        <button className="deploy-button" type="button" onClick={() => setMission(mode==='mission'?{mode,config:{ scene, weather, time, vehicle, quality, seed: seed.trim() || makeMissionSeed() }}:{mode,config:{vehicle,quality}})}><span>{mode==='mission'?'部署攔截單位':'進入練習場'}</span><small>ENTER TO DEPLOY</small><b>→</b></button>
+        <button className="deploy-button" type="button" onClick={() => {const behaviorSeed=makeMissionSeed();setMission(mode==='mission'?{mode,config:{ scene, weather, time, vehicle, quality, difficulty, behaviorSeed, seed: seed.trim() || makeMissionSeed() }}:{mode,config:{vehicle,quality,difficulty,behaviorSeed,speedKph:practiceSpeed,weather:practiceWeather}});}}><span>{mode==='mission'?'部署攔截單位':'進入練習場'}</span><small>ENTER TO DEPLOY</small><b>→</b></button>
         <p className="controls-hint"><kbd>↑</kbd><kbd>↓</kbd> 油門 / 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · {mode==='mission'?<><kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電</>:<><kbd>F</kbd> 巡航 · <kbd>P</kbd> 暫停</>}</p>
       </section>
       <footer><span>PRECISION IMMOBILIZATION TRAINING SYSTEM</span><span>BUILD 0.2 // TRAINING USE</span></footer>

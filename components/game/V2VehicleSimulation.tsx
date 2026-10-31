@@ -40,6 +40,7 @@ import {
 import { closestRoadSegment, roadTarget } from "@/lib/proceduralMap";
 import { physicalPitOutcome, pitMissionResolution, V2_PIT, type ContactFeedback } from "@/lib/pitContact";
 import { suspectRoadCruise } from "@/lib/pitPolicy";
+import { stepSuspectDecision } from "@/lib/suspectDriving";
 import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
 import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
 import { driveSupport } from "@/lib/supportDriving";
@@ -205,7 +206,11 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const segmentRightX = Math.cos(segment.yaw);
     const segmentRightZ = -Math.sin(segment.yaw);
     const localRoadX = (suspectPosition.x - segment.x) * segmentRightX + (suspectPosition.z - segment.z) * segmentRightZ;
-    const laneWave = Math.sin(state.elapsed * .38) * Math.min(2, roadHalfWidth * .34);
+    const distanceToPlayer = Math.hypot(suspectPosition.x - playerFrame.x, suspectPosition.z - playerFrame.z);
+    const decision = !state.pitCandidate && !(state.pitQualified && state.containmentElapsed < 3.2) && !getVehiclePhysics(suspect)?.disabled && state.suspectAi.mode === 'driving'
+      ? stepSuspectDecision(state.decision,config.difficulty ?? 'normal',dt,distanceToPlayer,localRoadX,roadHalfWidth,(playerFrame.x-suspectPosition.x)*segmentRightX+(playerFrame.z-suspectPosition.z)*segmentRightZ)
+      : state.decision;
+    const laneWave = decision.offset;
     const boundaryPressure = Math.abs(localRoadX) > roadHalfWidth * .72
       ? THREE.MathUtils.clamp(-localRoadX / roadHalfWidth, -1, 1) * Math.min(3.2, roadHalfWidth * .42)
       : 0;
@@ -247,10 +252,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const effectiveMode = state.pitCandidate || (state.pitQualified && state.containmentElapsed < 3.2) ? "driving" : ai.mode;
     const steeringYaw = effectiveMode === "reversing" ? suspectReverseEscapeYaw(localRoadX) : desiredYaw;
     const steeringYawError = normalizeAngle(steeringYaw - suspectFrame.yaw);
-    const distanceToPlayer = Math.hypot(suspectPosition.x - state.player.x, suspectPosition.z - state.player.z);
     const pursuitBoost = distanceToPlayer < 17 ? 3 : 0;
     const baseCruise = suspectRoadCruise(segment, roadTarget(state.road, state.suspectRoadIndex, 1), grip, pursuitBoost);
-    let suspectTargetSpeed = baseCruise * suspectForwardSpeedScale(yawError) * (.45 + suspectDriveability * .55);
+    let suspectTargetSpeed = baseCruise * suspectForwardSpeedScale(yawError) * (.45 + suspectDriveability * .55) * decision.speedScale;
     if (!suspectCanDrive || (state.pitQualified && state.containmentElapsed < 3.2)) suspectTargetSpeed = 0;
     if (effectiveMode === "braking") suspectTargetSpeed = 0;
     if (effectiveMode === "reversing") suspectTargetSpeed = -6 * grip;

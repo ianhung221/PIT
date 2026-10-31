@@ -9,8 +9,9 @@ import {readVehicleFrame,vehicleSnapshot} from '@/lib/vehiclePose';
 import {driveVehicleTarget} from '@/lib/vehicleDriver';
 import { VehicleModel } from './VehicleModel';
 import type { PracticeRuntime } from './practiceRuntime';
-import { PRACTICE, outsidePractice, type PracticeConfig } from '@/lib/practiceConfig';
-import { SUSPECT, VEHICLES } from '@/lib/gameConfig';
+import { PRACTICE, outsidePractice, practiceSpeed, type PracticeConfig } from '@/lib/practiceConfig';
+import { SUSPECT, VEHICLES, WEATHER } from '@/lib/gameConfig';
+import { stepSuspectDecision } from '@/lib/suspectDriving';
 import { applyPlayerForces } from '@/lib/playerVehicleForces';
 import { applyPitTargetControl } from '@/lib/pitTargetControl';
 import { V2_PIT } from '@/lib/pitContact';
@@ -33,12 +34,16 @@ export function PracticeVehicleSimulation({runtime,keys,config,zones,onUpdate}:{
     const dt=world.timestep,pf=frame(p),sf=frame(s);
     previous.current={player:pf,suspect:sf};
     state.elapsed+=dt; state.cooldown=Math.max(0,state.cooldown-dt);
-    applyPlayerForces(p,pf,state.driving,state.playerDamage,keys.current,config.vehicle,1,dt,pf);
-    if(state.candidate) { applyPitTargetControl(s,sf,state.suspectDamage,1,dt); return; }
+    const grip=WEATHER[config.weather ?? 'clear'].grip;
+    applyPlayerForces(p,pf,state.driving,state.playerDamage,keys.current,config.vehicle,grip,dt,pf);
+    if(state.candidate) { applyPitTargetControl(s,sf,state.suspectDamage,grip,dt); return; }
     const core=getVehiclePhysics(s);if(!core)return;
     const health=vehicleDriveability(state.suspectDamage);
-    const desired=vehicleCanContinue(state.suspectDamage)&&!core.disabled?PRACTICE.speed*health*Math.max(.2,Math.cos(sf.yaw)):0;
-    driveVehicleTarget(core,{speed:desired,yawError:normalizeAngle(-sf.yaw)},1,state.suspectDamage,dt,sf);
+    const pp=p.translation(),sp=s.translation();
+    const decision=stepSuspectDecision(state.decision,config.difficulty ?? 'normal',dt,Math.hypot(pp.x-sp.x,pp.z-sp.z),sp.x,8,pp.x-sp.x);
+    const desired=vehicleCanContinue(state.suspectDamage)&&!core.disabled?practiceSpeed(config)*health*Math.max(.2,Math.cos(sf.yaw))*decision.speedScale:0;
+    const targetYaw=Math.atan2(-(decision.offset-sp.x),35);
+    driveVehicleTarget(core,{speed:desired,yawError:normalizeAngle(targetYaw-sf.yaw)},grip,state.suspectDamage,dt,sf);
   });
   useAfterPhysicsStep(world=>{
     const state=runtime.current,p=playerRef.current,s=suspectRef.current;
@@ -82,10 +87,10 @@ export function PracticeVehicleSimulation({runtime,keys,config,zones,onUpdate}:{
     if(lastUi.current>=.1||state.phase!=='playing'){lastUi.current=0;onUpdate();}
   });
   return <>
-    <VehiclePhysicsBody bodyRef={playerRef} kind={config.vehicle} name="practice-player" x={PRACTICE.playerX} z={PRACTICE.playerZ} groundY={-.49} velocity={[0,0,-PRACTICE.speed]}>
+    <VehiclePhysicsBody bodyRef={playerRef} kind={config.vehicle} name="practice-player" x={PRACTICE.playerX} z={PRACTICE.playerZ} groundY={-.49} velocity={[0,0,-practiceSpeed(config)]}>
       <VehicleModel police model={config.vehicle} unit="01"/>
     </VehiclePhysicsBody>
-    <VehiclePhysicsBody bodyRef={suspectRef} kind="suspect" name="practice-target" groundY={-.49} velocity={[0,0,-PRACTICE.speed]}>
+    <VehiclePhysicsBody bodyRef={suspectRef} kind="suspect" name="practice-target" groundY={-.49} velocity={[0,0,-practiceSpeed(config)]}>
       <VehicleModel/>
       {zones&&[-1,1].map(side=><mesh key={side} position={[side*(SUSPECT.width/2+.02),.6,SUSPECT.length*.375]}><boxGeometry args={[.035,.45,SUSPECT.length*.25]}/><meshBasicMaterial color="#38f0c0" transparent opacity={.7}/></mesh>)}
     </VehiclePhysicsBody>

@@ -144,10 +144,28 @@ try {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   })()`);
   await delay(300);
+  if (!practiceCheck && process.env.PIT_TEST_DIFFICULTY) {
+    await evaluate(`(() => {const label=${JSON.stringify(({basic:'基礎',normal:'一般',advanced:'進階'})[process.env.PIT_TEST_DIFFICULTY])};[...document.querySelectorAll('button')].find(b=>b.textContent===label).click();})()`);
+    await delay(200);
+  }
   if (practiceCheck) {
     if (!worldCheck) throw new Error('Practice test requires PIT_TEST_WORLD=true');
     await evaluate(`(() => {const buttons=[...document.querySelectorAll('button')];buttons.find(b=>b.textContent==='PIT 練習').click();if(${JSON.stringify(process.env.PIT_TEST_VEHICLE)}==='interceptor')buttons.find(b=>b.textContent.includes('攔截跑車')).click();})()`);
     await delay(200);
+    if(process.env.PIT_TEST_DIFFICULTY) {
+      await evaluate(`(() => {const label=${JSON.stringify(({basic:'基礎',normal:'一般',advanced:'進階'})[process.env.PIT_TEST_DIFFICULTY])};[...document.querySelectorAll('button')].find(b=>b.textContent===label).click();})()`);
+      await delay(200);
+    }
+    if (process.env.PIT_TEST_PRACTICE_WEATHER || process.env.PIT_TEST_PRACTICE_SPEED) {
+      await evaluate(`(() => {
+        for (const [label,value] of [['練習天候',${JSON.stringify(process.env.PIT_TEST_PRACTICE_WEATHER ?? 'clear')}],['練習初速',${JSON.stringify(process.env.PIT_TEST_PRACTICE_SPEED ?? '50')}]]) {
+          const input=document.querySelector('select[aria-label="'+label+'"]');
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(input,value);
+          input.dispatchEvent(new Event('change',{bubbles:true}));
+        }
+      })()`);
+      await delay(200);
+    }
   }
   await evaluate(`document.querySelector(".deploy-button").click()`);
   console.log("browser: mission started");
@@ -183,9 +201,23 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (process.env.PIT_TEST_VEHICLE_PIT === 'true') {
+  if (process.env.PIT_TEST_MISSION_SETTINGS === 'true') {
+    await waitFor('window.__pitInspect().runtime.elapsed>5','mission-driving');
+    const state=await evaluate(`(() => {const r=window.__pitInspect().runtime;return {config:r.diagnostics.config,elapsed:r.elapsed,decision:r.decision,roadIndex:r.suspectRoadIndex,result:r.result};})()`);
+    const settings=JSON.parse(state.config);
+    if(settings.difficulty!==(process.env.PIT_TEST_DIFFICULTY ?? 'normal') || state.result!=='playing')throw Error('Mission difficulty failed: '+JSON.stringify(state));
+    console.log('mission settings and driving:',state);
+  } else if (process.env.PIT_TEST_VEHICLE_PIT === 'true') {
     if(!worldCheck)throw Error('Vehicle PIT test requires PIT_TEST_WORLD=true');
     await verifyVehiclePit({evaluate,command,delay,capture,waitFor});
+    if (process.env.PIT_COMPARE_AID) {
+      // Test-only: start from actual qualified PIT; bypassing advances the shared
+      // containment timer, so this is not an isolated brake-only experiment.
+      const start=await evaluate(`(() => {const r=window.__pitInspect().runtime;if(${JSON.stringify(process.env.PIT_COMPARE_AID)}==='bypass')r.containmentElapsed=3.2;return r.elapsed;})()`);
+      await waitFor(`window.__pitInspect().runtime.elapsed>=${start+6} || window.__pitInspect().runtime.result!=='playing'`,'pit-recovery-comparison');
+      const result=await evaluate(`(() => {const r=window.__pitInspect().runtime;return {elapsed:r.elapsed,containmentElapsed:r.containmentElapsed,result:r.result,outcome:r.outcome,suspect:r.suspect,supports:r.supports.map(s=>({x:s.x,z:s.z,role:s.role,speed:s.speed}))};})()`);
+      console.log('post-PIT controlled comparison',process.env.PIT_COMPARE_AID,JSON.stringify(result));
+    }
     if(runtimeErrors.length||failedRequests.length)throw Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
   } else if (process.env.PIT_TEST_ROLLOVER === 'true') {
     if(!worldCheck)throw Error('Rollover test requires PIT_TEST_WORLD=true');
@@ -197,8 +229,24 @@ try {
     if(runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
     console.log('vehicle integration: all browser fixtures passed', url);
   } else if (practiceCheck) {
-    if(process.env.PIT_TEST_REPAIR==='true')await verifyPracticeRepair({evaluate,command,delay,capture});
-    await verifyPractice({evaluate,command,delay,capture,waitFor});
+    if(process.env.PIT_TEST_PRACTICE_SPEED || process.env.PIT_TEST_PRACTICE_WEATHER) {
+      const setting=await evaluate(`(() => {const s=window.__pitInspect();return {speed:s.runtime.player.speed,config:s.runtime.diagnostics.config,particles:!!s.particles};})()`);
+      const expected=Number(process.env.PIT_TEST_PRACTICE_SPEED ?? 50)/3.6;
+      if(Math.abs(setting.speed-expected)>.001 || setting.particles !== ((process.env.PIT_TEST_PRACTICE_WEATHER ?? 'clear')!=='clear')) throw Error('Practice configuration failed: '+JSON.stringify(setting));
+      console.log('practice settings:',setting);
+    }
+    if(process.env.PIT_TEST_SETTINGS_ONLY==='true') {
+      const selected=await evaluate(`window.__pitInspect().runtime.diagnostics.config`);
+      if(!selected.includes(process.env.PIT_TEST_DIFFICULTY ?? 'normal'))throw Error('Difficulty missing from config: '+selected);
+      await evaluate(`document.querySelector('.practice-start').click()`);
+      await waitFor(`window.__pitInspect().runtime.elapsed>2`, 'practice-moving');
+      await evaluate(`[...document.querySelectorAll('button')].find(b=>b.textContent==='重設練習').click()`);
+      await waitFor(`window.__pitInspect().runtime.phase==='ready' && window.__pitInspect().runtime.elapsed===0`, 'practice-reset-settings');
+      console.log('practice settings and reset passed',selected);
+    } else {
+      if(process.env.PIT_TEST_REPAIR==='true')await verifyPracticeRepair({evaluate,command,delay,capture});
+      await verifyPractice({evaluate,command,delay,capture,waitFor});
+    }
     if(runtimeErrors.length || failedRequests.length) throw new Error(`Browser errors: ${[...runtimeErrors,...failedRequests].join('; ')}`);
     console.log('practice: all browser fixtures passed', url);
   } else if (process.env.PIT_TEST_DRIVING === "true") {

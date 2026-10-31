@@ -9,7 +9,8 @@ import { PracticeVehicleSimulation } from './PracticeVehicleSimulation';
 import { makePracticeRuntime, type PracticeRuntime } from './practiceRuntime';
 import { PitDiagnosticPanel } from './PitDiagnosticPanel';
 import { PRACTICE, type PracticeConfig } from '@/lib/practiceConfig';
-import { QUALITY_SETTINGS } from '@/lib/gameConfig';
+import { QUALITY_SETTINGS, WEATHER } from '@/lib/gameConfig';
+import { V2Weather } from './V2Weather';
 import { resetPlayerDriving, noteDrivingKey } from '@/lib/playerDriving';
 import { PlayerStatus } from './PlayerStatus';
 
@@ -68,6 +69,7 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
       <color attach="background" args={['#aabec6']}/><fog attach="fog" args={['#aabec6',220,1700]}/>
       <ambientLight intensity={1.3}/><directionalLight position={[15,28,10]} intensity={2} castShadow={config.quality!=='low'}/>
       <gridHelper args={[PRACTICE.halfSize*2,200,'#829591','#626d6b']} position={[0,-.48,0]}/>
+      <V2Weather config={config} runtime={runtime}/>
       <Physics gravity={[0,-9.81,0]} timeStep={1/60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
         <PhysicsGround />
         <PracticeVehicleSimulation key={run} runtime={runtime} keys={keys} config={config} zones={zones} onUpdate={update}/>
@@ -76,7 +78,7 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
     </Canvas>
     <header className="game-top"><div className="game-logo"><b>PIT</b> 練習場</div><button onClick={togglePause} aria-label="暫停練習">Ⅱ</button></header>
     <section className="practice-diagnostics">
-      <small>封閉練習許可 · 晴朗／白天 · 不需 Q1</small>
+      <small>封閉練習許可 · {WEATHER[config.weather ?? 'clear'].label}／白天 · 不需 Q1</small>
       <PitDiagnosticPanel data={hud.diagnostics} details={details}/>
       <PlayerStatus driving={hud.driving} details={details}/>
       <div className="diagnostic-toggles"><label><input type="checkbox" checked={details} onChange={e=>setDetails(e.target.checked)}/> 詳細量測</label><label><input type="checkbox" checked={zones} onChange={e=>setZones(e.target.checked)}/> 接觸區域提示</label></div>
@@ -88,7 +90,7 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
     {paused&&<div className="result-overlay"><section className="result-card practice-modal">
       <span>CONTROLLED PRACTICE</span>
       <h2>{hud.phase==='ready'?'準備練習':hud.phase==='qualified'?'有效 PIT 已確認':hud.phase==='outside'?'已離開練習範圍':'練習暫停'}</h2>
-      <p>{hud.phase==='ready'?'兩車同向 50 km/h，目標在前方約 10 公尺。按開始後才會行駛；沒有後援、倒數或包圍要求。':hud.phase==='qualified'?'本次失控符合遊戲判定，紀錄已保留。可以立即再練，或繼續觀察目標恢復行駛。':hud.phase==='outside'?'任一車輛超出 2 × 2 公里範圍，模擬已暫停。請重設練習；邊界沒有隱形牆。':'準備好後可繼續，或回到設定。'}</p>
+      <p>{hud.phase==='ready'?`兩車同向 ${config.speedKph ?? 50} km/h，目標在前方約 10 公尺。按開始後才會行駛；沒有後援、倒數或包圍要求。`:hud.phase==='qualified'?'本次失控符合遊戲判定，紀錄已保留。可以立即再練，或繼續觀察目標恢復行駛。':hud.phase==='outside'?'任一車輛超出 2 × 2 公里範圍，模擬已暫停。請重設練習；邊界沒有隱形牆。':'準備好後可繼續，或回到設定。'}</p>
       {hud.phase!=='ready'&&<PitDiagnosticPanel data={hud.diagnostics} details={details}/>}
       {hud.phase!=='ready'&&<details><summary>本局接觸紀錄（最多 60 筆）</summary><ol className="debrief-log">{hud.diagnostics.events.map((e,i)=><li key={i}>#{e.attempt} · {e.at.toFixed(1)}s · {e.message}</li>)}</ol></details>}
       <div className="debrief-actions">

@@ -4,8 +4,9 @@
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
-import type { MissionConfig } from "@/lib/gameConfig";
+import type { WeatherId } from "@/lib/gameConfig";
 import type { V2Runtime } from "@/components/game/v2Runtime";
+import type { PracticeRuntime } from "@/components/game/practiceRuntime";
 import { advanceWeather, createWeatherParticles } from "@/lib/weatherMotion";
 
 function createSoftParticleTexture(size = 32) {
@@ -25,22 +26,23 @@ function createSoftParticleTexture(size = 32) {
   return texture;
 }
 
-export function V2Weather({ config, runtime }: { config: MissionConfig; runtime: MutableRefObject<V2Runtime> }) {
+export function V2Weather({ config, runtime }: { config: {weather?:WeatherId}; runtime: MutableRefObject<V2Runtime | PracticeRuntime> }) {
   const points = useRef<THREE.Points>(null);
   const particles = useMemo(() => createWeatherParticles(), []);
   const particleTexture = useMemo(() => createSoftParticleTexture(), []);
   const previous = useRef<{ x: number; z: number } | null>(null);
   useEffect(() => () => particleTexture.dispose(), [particleTexture]);
   useFrame((_, dt) => {
-    if (!points.current || config.weather === "clear") return;
+    if (!points.current || !config.weather || config.weather === "clear") return;
     const player = runtime.current.player;
     const last = previous.current ?? player;
-    if (runtime.current.result === "playing") advanceWeather(particles, config.weather, dt, player.x - last.x, player.z - last.z);
+    const current=runtime.current;
+    if (('phase' in current ? current.phase : current.result) === "playing") advanceWeather(particles, config.weather, dt, player.x - last.x, player.z - last.z);
     previous.current = { x: player.x, z: player.z };
     points.current.position.set(player.x, 0, player.z);
     points.current.geometry.attributes.position.needsUpdate = true;
   });
-  if (config.weather === "clear") return null;
+  if (!config.weather || config.weather === "clear") return null;
   const snow = config.weather === "snow";
   return <points ref={points} name="weather-particles" frustumCulled={false} userData={{ mirrorSizeScale: snow ? .18 : .25, mirrorOpacityScale: .52 }}>
     <bufferGeometry><bufferAttribute attach="attributes-position" args={[particles.positions, 3]} /></bufferGeometry>
