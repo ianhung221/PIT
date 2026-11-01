@@ -10,7 +10,7 @@ export interface VehiclePedals { throttle:number; brake:number; steer:number; ge
 export interface VehiclePhysics {
   body:RigidBody; world:World; controller:DynamicRayCastVehicleController;
   config:ReturnType<typeof vehiclePhysicsConfig>; lastYaw:number; wheelSteering:number;
-  groundedWheels:number; disposed:boolean; disabled:boolean; rollover:RolloverState;
+  groundedWheels:number; groundContact:boolean; disposed:boolean; disabled:boolean; rollover:RolloverState;
   wheelContact:boolean[]; wheelFriction:number[]; sideStiffness:number; suspensionLengths:number[];
 }
 const registered=new WeakMap<RigidBody,VehiclePhysics>();
@@ -28,7 +28,7 @@ export function createVehiclePhysics(world:World,body:RigidBody,kind:PhysicsVehi
     controller.setWheelMaxSuspensionTravel(i,config.suspension.maxTravel);
     controller.setWheelMaxSuspensionForce(i,config.massKg*9.81*2);
   }
-  const vehicle={body,world,controller,config,lastYaw:0,wheelSteering:0,groundedWheels:0,disposed:false,disabled:false,rollover:makeRolloverState(),wheelContact:[false,false,false,false],wheelFriction:[NaN,NaN,NaN,NaN],sideStiffness:NaN,suspensionLengths:Array(4).fill(config.suspension.restLength) as number[]};
+  const vehicle={body,world,controller,config,lastYaw:0,wheelSteering:0,groundedWheels:0,groundContact:false,disposed:false,disabled:false,rollover:makeRolloverState(),wheelContact:[false,false,false,false],wheelFriction:[NaN,NaN,NaN,NaN],sideStiffness:NaN,suspensionLengths:Array(4).fill(config.suspension.restLength) as number[]};
   registered.set(body,vehicle);return vehicle;
 }
 export function getVehiclePhysics(body:RigidBody) {return registered.get(body);}
@@ -88,6 +88,7 @@ export function sampleVehiclePhysics(vehicle:VehiclePhysics,dt:number,observed?:
   updateRollover(vehicle.rollover,{upDot:frame.upDot,groundedWheels:vehicle.groundedWheels,groundContact,
     planarSpeed:frame.planarSpeed,angularSpeed:frame.angularSpeed,verticalSpeed:frame.velocityY},dt);
   vehicle.disabled=vehicle.rollover.disabled;
+  vehicle.groundContact=groundContact;
 }
 export function physicsSnapshot(vehicle:VehiclePhysics) {
   return physicsSnapshotFromFrame(vehicle,readVehicleFrame(vehicle.body,vehicle.lastYaw));

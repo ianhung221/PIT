@@ -13,6 +13,7 @@ import { QUALITY_SETTINGS, WEATHER } from '@/lib/gameConfig';
 import { V2Weather } from './V2Weather';
 import { resetPlayerDriving, noteDrivingKey } from '@/lib/playerDriving';
 import { PlayerStatus } from './PlayerStatus';
+import { FixedPhysicsStepper } from './FixedPhysicsStepper';
 
 function PracticeCamera({runtime}:{runtime:MutableRefObject<PracticeRuntime>}) {
   const initialized=useRef(false);
@@ -70,7 +71,8 @@ export function PracticeGame({config,onExit}:{config:PracticeConfig;onExit:()=>v
       <ambientLight intensity={1.3}/><directionalLight position={[15,28,10]} intensity={2} castShadow={config.quality!=='low'}/>
       <gridHelper args={[PRACTICE.halfSize*2,200,'#829591','#626d6b']} position={[0,-.48,0]}/>
       <V2Weather config={config} runtime={runtime}/>
-      <Physics gravity={[0,-9.81,0]} timeStep={1/60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
+      <Physics gravity={[0,-9.81,0]} timeStep={1/60} maxCcdSubsteps={4} numSolverIterations={8} paused>
+        <FixedPhysicsStepper running={()=>runtime.current.phase==='playing'}/>
         <PhysicsGround />
         <PracticeVehicleSimulation key={run} runtime={runtime} keys={keys} config={config} zones={zones} onUpdate={update}/>
       </Physics>

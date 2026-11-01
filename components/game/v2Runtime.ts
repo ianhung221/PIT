@@ -1,6 +1,6 @@
 import { generateRoad } from "@/lib/proceduralMap";
 import { makePlayerDriving, type PlayerDriving } from "@/lib/playerDriving";
-import { pristineDamage } from "@/lib/vehicleDamage";
+import { pristineDamage, vehicleCanPerformDriving } from "@/lib/vehicleDamage";
 import { SCENES, type MissionConfig } from "@/lib/gameConfig";
 import type {
   CarSnapshot,
@@ -21,6 +21,7 @@ import { initialControl, type ControlAssessment } from "@/lib/vehicleControlAsse
 import { makeDiagnostics, type PitDiagnostics } from "@/lib/pitDiagnostics";
 import { makeContactEpisodes } from '@/lib/pitContactEpisode';
 import { makeSuspectDecision, type SuspectDecision } from '@/lib/suspectDriving';
+import { makeDamageEpisodes, type DamageEpisodes } from '@/lib/vehicleCollisionDamage';
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -40,6 +41,8 @@ export interface SupportUnitSnapshot extends CarSnapshot {
 }
 
 export interface V2Runtime {
+  damageEpisodes: DamageEpisodes;
+  supportDamage: [VehicleDamage,VehicleDamage];
   decision: SuspectDecision;
   contactEpisodes: ReturnType<typeof makeContactEpisodes>;
   diagnostics: PitDiagnostics;
@@ -91,6 +94,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
   const seed = config.seed?.trim() || "PIT-TRAINING";
   const initialSpeed = SCENES[config.scene].aiSpeed * .72;
   return {
+    damageEpisodes:makeDamageEpisodes(),supportDamage:[pristineDamage(),pristineDamage()],
     decision: makeSuspectDecision(config.behaviorSeed ?? seed),
     contactEpisodes: makeContactEpisodes(),
     diagnostics: makeDiagnostics('mission', JSON.stringify(config)),
@@ -149,7 +153,7 @@ export function logRuntimeEvent(runtime: V2Runtime, message: string) {
 export function refreshPitAuthorization(runtime: V2Runtime, config: MissionConfig, suspect = runtime.suspect, force = false) {
   if (!runtime.authorizationRequested || (!force && runtime.elapsed - runtime.authorizationCheckedAt < .25)) return;
   const segment = runtime.road.segments[runtime.suspectRoadIndex];
-  const supportUnits = runtime.supports.filter(c => !c.pose?.rolloverDisabled&&Math.hypot(c.x - suspect.x, c.z - suspect.z) < 150).length;
+  const supportUnits = runtime.supports.filter((c,i) => !c.pose?.rolloverDisabled&&vehicleCanPerformDriving(runtime.supportDamage[i])&&Math.hypot(c.x - suspect.x, c.z - suspect.z) < 150).length;
   const decision = evaluatePitRisk(missionPitRisk(config, segment, suspect, supportUnits));
   const reason = decision.reasons.join("、");
   if (runtime.authorization !== decision.authorization || runtime.authorizationReason !== reason) {

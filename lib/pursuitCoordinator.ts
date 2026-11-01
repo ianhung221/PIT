@@ -1,7 +1,7 @@
 import type { PursuitRole, RadioCommand, RadioFeedback } from "../types/game.ts";
 import type { BlockadeState } from "./supportContainment.ts";
 
-export const ROLE_LABELS: Record<PursuitRole, string> = { primary: "主追", secondary: "第二順位", tertiary: "第三順位", "containment-front": "車頭封鎖", "containment-rear": "車尾封鎖", unavailable:"翻覆不可用" };
+export const ROLE_LABELS: Record<PursuitRole, string> = { primary: "主追", secondary: "第二順位", tertiary: "第三順位", "containment-front": "車頭封鎖", "containment-rear": "車尾封鎖", unavailable:"不可用" };
 export const COMMAND_LABELS: Record<RadioCommand, string> = { "request-pit": "請求 PIT 授權", "prepare-pit": "準備執行 PIT", "move-up": "第二單位靠近", "block-front": "封鎖嫌犯車頭", "take-primary": "接替主追單位", terminate: "終止追逐" };
 export const RADIO_PHASE_LABELS = { received: "已接收", executing: "執行中", completed: "完成", unable: "暫時無法執行" };
 

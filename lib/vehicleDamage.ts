@@ -11,6 +11,9 @@ const clampHealth = (value: number) => Math.max(0, Math.min(1, value));
 
 export function applyImpactDamage(current: VehicleDamage, impact: ImpactInput): VehicleDamage {
   const severity = Math.max(0, Math.min(.72, (impact.impulse - 2) / 26));
+  return applySeverityDamage(current,impact,severity);
+}
+export function applySeverityDamage(current:VehicleDamage,impact:ImpactInput,severity:number):VehicleDamage {
   if (severity <= 0) return { ...current };
   const front = impact.localZ < -impact.halfLength * .3;
   const rear = impact.localZ > impact.halfLength * .3;
@@ -41,7 +44,7 @@ export function vehicleDriveability(damage: VehicleDamage): number {
 }
 
 export function vehicleCanContinue(damage: VehicleDamage): boolean {
-  return damage.engine > .16 && damage.steering > .2 && vehicleDriveability(damage) > .28;
+  return damage.engine > .16;
 }
 
 export function playerVehicleStatus(damage: VehicleDamage) {
@@ -54,4 +57,15 @@ export function playerVehicleStatus(damage: VehicleDamage) {
   if(!driveable&&!faults.length) faults.push('整體車況不足');
   return {driveable,steeringAuthority,health:vehicleDriveability(damage),
     reason:driveable?(faults.join('；')||'自車可正常駕駛'):`動力不可用：${faults.join('；')}；可煞車，P 暫停後可返回設定`};
+}
+
+export function vehicleCanPerformDriving(damage:VehicleDamage):boolean {
+  return vehicleCanContinue(damage)&&damage.steering*damage.alignment>.2;
+}
+export function vehicleFaultSummary(damage:VehicleDamage,rolloverDisabled=false):string {
+  if(rolloverDisabled)return '穩定翻覆，動力不可用';
+  if(!vehicleCanContinue(damage))return '動力失能';
+  if(!vehicleCanPerformDriving(damage))return '轉向嚴重受損，動力可用';
+  if(damage.steering*damage.alignment<.5)return '轉向受損';
+  return '動力及轉向可用';
 }

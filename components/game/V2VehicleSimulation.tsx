@@ -23,7 +23,6 @@ import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
 import { logRuntimeEvent, updateRadioFeedback, refreshPitAuthorization } from "@/components/game/v2Runtime";
 import {
   SCENES,
-  SUSPECT,
   VEHICLES,
   WEATHER,
   type CameraMode,
@@ -46,8 +45,9 @@ import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
 import { driveSupport } from "@/lib/supportDriving";
 import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade } from "@/lib/supportContainment";
 import { roadSections } from "@/lib/roadGeometry";
-import { assessVehicleControl, advanceControlTimers, controlRoadGeometry, CONTROL, type ControlAssessment } from "@/lib/vehicleControlAssessment";
-import { applyImpactDamage, vehicleCanContinue, vehicleDriveability } from "@/lib/vehicleDamage";
+import { assessVehicleControl, advanceControlTimers, controlRoadGeometry, isDisabledVehicleSettled, CONTROL, type ControlAssessment } from "@/lib/vehicleControlAssessment";
+import { vehicleCanContinue, vehicleCanPerformDriving, vehicleDriveability, vehicleFaultSummary } from "@/lib/vehicleDamage";
+import { sampleCollisionDamage } from "@/lib/vehicleCollisionDamage";
 import type { MissionOutcome, RadioFeedback, RadioCommand } from "@/types/game";
 import type { PitAuthorization } from "@/types/game";
 
@@ -63,6 +63,9 @@ export interface V2HudData {
   targetBearing: number;
   pit: number;
   suspectDriveability: number;
+  suspectStatus:string;
+  supportStatus:[string,string];
+  disabledFor:number;
   playerDriveability: number;
   biome: MissionConfig["scene"];
   roadIndex: number;
@@ -104,6 +107,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
   const support3Ref = useRef<RapierRigidBody>(null);
   const lastUi = useRef(0);
   const preImpact = useRef<{player: BodyFrame; suspect: BodyFrame} | null>(null);
+  const previousFrames=useRef<BodyFrame[]>([]);
   const bodyFrame=(body:RapierRigidBody)=>readVehicleFrame(body,getVehiclePhysics(body)?.lastYaw??0);
 
   const finish = (result: FinishData["result"], outcome: MissionOutcome) => {
@@ -121,16 +125,48 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const player=playerRef.current,suspect=suspectRef.current,state=runtime.current;
     if(!player||!suspect||state.result!=="playing")return;
     const pf=bodyFrame(player),sf=bodyFrame(suspect),pre=preImpact.current??{player:pf,suspect:sf};
-    for(const body of [player,suspect,support2Ref.current,support3Ref.current]) {
+    const bodiesAfter=[player,suspect,support2Ref.current,support3Ref.current];
+    const framesAfter=bodiesAfter.map((body,i)=>!body?null:i===0?pf:i===1?sf:bodyFrame(body));
+    for(let i=0;i<bodiesAfter.length;i++) {
+      const body=bodiesAfter[i];
       if(!body)continue;
       const core=getVehiclePhysics(body);if(!core)continue;
       const wasDisabled=core.disabled;
-      sampleVehiclePhysics(core,world.timestep,body===player?pf:body===suspect?sf:undefined);
+      sampleVehiclePhysics(core,world.timestep,framesAfter[i]??undefined);
       if(wasDisabled!==core.disabled) {
         const label=body===player?'01 自車':body===suspect?'嫌犯車':body===support2Ref.current?'02 後援':'03 後援';
         logRuntimeEvent(state,`${label}：${core.disabled?'穩定翻覆，動力不可用':'已恢復輪胎支撐，可重新駕駛'}`);
       }
     }
+    const supports=[support2Ref.current,support3Ref.current];
+    if(supports[0]&&supports[1]){
+      const bodies=[player,suspect,supports[0],supports[1]];
+      const kinds=[config.vehicle,'suspect','patrol','suv'] as const;
+      const damages=[state.playerDamage,state.suspectDamage,...state.supportDamage];
+      const resultDamage=sampleCollisionDamage(world,bodies.map((body,i)=>({body,kind:kinds[i],damage:damages[i],before:previousFrames.current[i]??bodyFrame(body)})),state.damageEpisodes,state.elapsed);
+      state.playerDamage=resultDamage[0];state.suspectDamage=resultDamage[1];state.supportDamage=[resultDamage[2],resultDamage[3]];
+      const cars=bodies.map((body,i)=>{
+        const f=framesAfter[i]!,core=getVehiclePhysics(body);
+        const snap=core?physicsSnapshotFromFrame(core,f):bodySnapshot(body);
+        return {...snap,angularSpeed:f.angularSpeed};
+      });
+      const geometry=controlGeometryRef.current ??=controlRoadGeometry(roadSections(state.road));
+      const due=state.elapsed-state.controlCheckedAt>=CONTROL.interval;
+      const control=assessVehicleControl({...cars[1],model:'suspect'},[
+        {...cars[0],model:config.vehicle},{...cars[2],model:'patrol'},{...cars[3],model:'suv'},
+      ],geometry.slice(Math.max(0,state.suspectRoadIndex-1),state.suspectRoadIndex+2),due?CONTROL.maxNodes:0);
+      if(due||control.status!=='uncertain'||state.control.status!=='open')state.control=control;
+      if(due)state.controlCheckedAt=state.elapsed;
+      const core=getVehiclePhysics(suspect),driveable=vehicleCanContinue(state.suspectDamage)&&!core?.disabled;
+      const speed=Math.hypot(sf.velocityX,sf.velocityZ);
+      const rotation=suspect.rotation();
+      const validPose=[rotation.x,rotation.y,rotation.z,rotation.w].every(Number.isFinite)&&Math.hypot(rotation.x,rotation.y,rotation.z,rotation.w)>1e-9;
+      const settled=isDisabledVehicleSettled({...sf,validPose,groundedWheels:core?.groundedWheels??0,rolloverDisabled:core?.disabled??false,groundContact:core?.groundContact??false});
+      Object.assign(state,advanceControlTimers(state,control,driveable,speed,world.timestep,false,settled));
+      const resolution=pitMissionResolution(driveable,speed,state.disabledFor,state.heldFor);
+      if(resolution){logRuntimeEvent(state,resolution==='contained'?'攔停確認：實體出口封閉並穩定維持；不限定玩家或後援位置':'失能確認：嫌犯動力不可用且已穩定停下');finish('success',resolution);return;}
+    }
+    if(state.elapsed>=90){finish('failed','failed');return;}
     let solidContact=false;
     for(let i=0;i<player.numColliders();i++)world.contactPairsWith(player.collider(i),other=>{
       world.contactPair(player.collider(i),other,m=>{if(m.numSolverContacts())solidContact=true;});
@@ -148,11 +184,6 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const episode=state.contactEpisodes.current;
     if(!contact||!episode)return;
     if(decision.started||episode.diagnosticId)observeDiagnostic(state.diagnostics,contact,episode,state.elapsed,decision.changed);
-    if(decision.damage) {
-      const impact=Math.max(2,contact.normalSpeed*2);
-      state.suspectDamage=applyImpactDamage(state.suspectDamage,{impulse:impact,localX:contact.localX,localZ:contact.localZ,halfWidth:SUSPECT.width/2,halfLength:SUSPECT.length/2});
-      state.playerDamage=applyImpactDamage(state.playerDamage,{impulse:impact*.72,localX:contact.playerLocalX,localZ:contact.playerLocalZ,halfWidth:VEHICLES[config.vehicle].width/2,halfLength:VEHICLES[config.vehicle].length/2});
-    }
     if(decision.changed) {
       const message=episode.status==='expired'?'接觸觀察期限已到，未形成合適接觸':decision.assessment!.reason;
       state.contactFeedback={classification:episode.classification,message,at:state.elapsed};
@@ -182,11 +213,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     // Observe the previous solved physics step, before controllers write their
     // desired velocities. A blocked steering command is not actual rotation.
     const measuredFrames=[player,suspect,support2,support3].map(bodyFrame);
-    const measuredCars = [player, suspect, support2, support3].map((body,i) => {
-      const core=getVehiclePhysics(body);
-      const snapshot=core?physicsSnapshotFromFrame(core,measuredFrames[i]):bodySnapshot(body);
-      return {...snapshot,angularSpeed:snapshot.pose?.angularSpeed??0};
-    });
+    previousFrames.current=measuredFrames;
     const dt = world.timestep;
     state.elapsed += dt;
     state.collisionCooldown = Math.max(0, state.collisionCooldown - dt);
@@ -317,8 +344,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     }
     const assignments = coordinatePursuit({
       command: automaticBlockade ? "block-front" : state.tacticalCommand,
-      unit2Available:!getVehiclePhysics(support2)?.disabled,
-      unit3Available:!getVehiclePhysics(support3)?.disabled,
+      unit2Available:!getVehiclePhysics(support2)?.disabled&&vehicleCanPerformDriving(state.supportDamage[0]),
+      unit3Available:!getVehiclePhysics(support3)?.disabled&&vehicleCanPerformDriving(state.supportDamage[1]),
       pitQualified: state.pitQualified,
       suspectStopped: state.tacticalCommand === "block-front" ? Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2 : suspectSlow,
       suspectDriveable: suspectCanDrive,
@@ -330,8 +357,8 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
     [support2, support3].forEach((body, unit) => {
       const frame = measuredFrames[unit+2], position = body.translation();
-      if(getVehiclePhysics(body)?.disabled){
-        driveSupport(body,0,0,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame);
+      if(getVehiclePhysics(body)?.disabled||!vehicleCanPerformDriving(state.supportDamage[unit])){
+        driveSupport(body,0,0,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
         state.supportArrivedFor[unit]=0;return;
       }
       const index = closestRoadSegment(state.road, position.x, position.z, state.supportRoadIndices[unit]);
@@ -342,15 +369,15 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         ? blockadeControl(state.blockade, unit as 0 | 1, car, currentSuspect, neighbors, state.road, dt, grip) : null;
       const control = maneuver ?? stepSupportAI(state.supportAi[unit], { car, road: state.road, index, slot, dt, grip, maxSpeed: unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, neighbors });
       if (maneuver) { state.supportAi[unit].lastX = car.x; state.supportAi[unit].lastZ = car.z; state.supportAi[unit].stalledFor = 0; }
-      driveSupport(body, control.yawError, control.speed, unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, dt, grip, frame);
+      driveSupport(body, control.yawError, control.speed, unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, dt, grip, frame,state.supportDamage[unit]);
       state.supportArrivedFor[unit] = control.arrived ? state.supportArrivedFor[unit] + dt : 0;
       if (control.modeChanged) logRuntimeEvent(state, `0${unit + 2} 後援：${{ driving: "已脫困，重新加入追逐", braking: "受阻煞停", reversing: "倒車離障", realigning: "轉回道路" }[state.supportAi[unit].mode]}`);
     });
     if (state.tacticalCommand && state.tacticalCommand !== "terminate" && state.elapsed - state.commandAt > .7 && !(state.radioFeedback?.command === "request-pit" && state.elapsed - state.radioFeedback.at < 3)) {
       const command = state.tacticalCommand;
       const arrived = state.supportArrivedFor[0] > .6 && (command === "prepare-pit" || command === "block-front" ? state.supportArrivedFor[1] > .6 : true);
-      const unavailable=[support2,support3].some(body=>getVehiclePhysics(body)?.disabled);
-      const feedback = unavailable?{phase:'unable' as const,message:'後援有單位穩定翻覆，無法完成目前協同指令'}:command === "block-front" ? blockadeFeedback(state.blockade) : tacticalFeedback(command, Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2, arrived, state.supportAi.some(ai => ai.mode !== "driving"));
+      const reasons=[support2,support3].map((body,i)=>getVehiclePhysics(body)?.disabled?`0${i+2} 穩定翻覆`:!vehicleCanContinue(state.supportDamage[i])?`0${i+2} 動力失能`:!vehicleCanPerformDriving(state.supportDamage[i])?`0${i+2} 轉向受損`:null).filter(Boolean);
+      const feedback = reasons.length?{phase:'unable' as const,message:`${reasons.join('、')}，無法完成目前協同指令`}:command === "block-front" ? blockadeFeedback(state.blockade) : tacticalFeedback(command, Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2, arrived, state.supportAi.some(ai => ai.mode !== "driving"));
       updateRadioFeedback(state, { command, phase: feedback.phase, message: `${COMMAND_LABELS[command]}・${RADIO_PHASE_LABELS[feedback.phase]}：${feedback.message}` });
     }
 
@@ -358,29 +385,6 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const support3Position = support3.translation();
     const frontDistance = Math.hypot(support2Position.x - suspectPosition.x, support2Position.z - suspectPosition.z);
     const rearDistance = Math.hypot(support3Position.x - suspectPosition.x, support3Position.z - suspectPosition.z);
-    const searchDue = state.elapsed - state.controlCheckedAt >= CONTROL.interval;
-    const controlGeometry = controlGeometryRef.current ??= controlRoadGeometry(roadSections(state.road));
-    const control = assessVehicleControl(
-      { ...measuredCars[1], model: "suspect" },
-      [
-        { ...measuredCars[0], model: config.vehicle },
-        { ...measuredCars[2], model: "patrol" },
-        { ...measuredCars[3], model: "suv" },
-      ],
-      controlGeometry.slice(Math.max(0, state.suspectRoadIndex - 1), state.suspectRoadIndex + 2),
-      searchDue ? CONTROL.maxNodes : 0,
-    );
-    // Cached escape text is display-only. The closure certificate and timers are
-    // recomputed every physics step, never carried over from a stale search.
-    if (searchDue || control.status !== "uncertain" || state.control.status !== "open") state.control = control;
-    if (searchDue) state.controlCheckedAt = state.elapsed;
-    Object.assign(state, advanceControlTimers(state, control, suspectCanDrive, planarSuspectSpeed, dt));
-    const resolution = pitMissionResolution(suspectCanDrive, planarSuspectSpeed, state.disabledFor, state.heldFor);
-    if (resolution) {
-      logRuntimeEvent(state, resolution === "contained" ? "攔停確認：實體出口封閉並穩定維持；不限定玩家或後援位置" : "失能確認：嫌犯無法繼續駕駛且已穩定停下");
-      finish("success", resolution);
-      return;
-    }
     if (state.pitQualified && suspectCanDrive && state.containmentElapsed > 8 && Math.abs(suspectFrame.forwardSpeed) > 8 && Math.min(frontDistance, rearDistance) > 9) {
       state.pitQualified = false;
       state.pit = 0;
@@ -406,10 +410,6 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     state.supports[0] = {...state.supports[0],...bodySnapshot(support2)};
     state.supports[1] = {...state.supports[1],...bodySnapshot(support3)};
 
-    if (state.elapsed >= 90) {
-      finish("failed", "failed");
-      return;
-    }
     lastUi.current += dt;
     if (lastUi.current >= .1) {
       lastUi.current = 0;
@@ -423,6 +423,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         ),
         pit: state.pit,
         suspectDriveability: vehicleDriveability(state.suspectDamage),
+        suspectStatus:vehicleFaultSummary(state.suspectDamage,!!getVehiclePhysics(suspect)?.disabled),
+        supportStatus:[vehicleFaultSummary(state.supportDamage[0],!!getVehiclePhysics(support2)?.disabled),vehicleFaultSummary(state.supportDamage[1],!!getVehiclePhysics(support3)?.disabled)],
+        disabledFor:state.disabledFor,
         playerDriveability,
         biome: state.road.segments[state.playerRoadIndex].biome,
         roadIndex: state.playerRoadIndex,

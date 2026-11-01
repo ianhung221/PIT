@@ -19,6 +19,7 @@ import { makeBlockade } from "@/lib/supportContainment";
 import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
 import { makePlayerDriving, resetPlayerDriving, noteDrivingKey } from "@/lib/playerDriving";
 import { PlayerStatus } from './PlayerStatus';
+import { FixedPhysicsStepper } from './FixedPhysicsStepper';
 import { PitDiagnosticPanel } from './PitDiagnosticPanel';
 import { makeDiagnostics } from '@/lib/pitDiagnostics';
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
@@ -86,7 +87,8 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
     <fog attach="fog" args={[fogColor, 35 * WEATHER[config.weather].visibility, 230 * WEATHER[config.weather].visibility]} />
     <ambientLight intensity={config.time === "night" ? .3 : 1.2} />
     <directionalLight castShadow position={[15, 28, 10]} intensity={config.time === "night" ? .42 : 2.1} color={config.time === "night" ? "#85a7d9" : "#fff1cc"} />
-    <Physics gravity={[0, -9.81, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused={paused}>
+    <Physics gravity={[0, -9.81, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused>
+      <FixedPhysicsStepper running={()=>!paused && runtime.current.result==='playing'}/>
       <ProceduralWorld runtime={runtime} config={config} />
       <V2VehicleSimulation config={config} cameraMode={cameraMode} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
@@ -121,6 +123,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     targetBearing: 0,
     pit: 0,
     suspectDriveability: 1,
+    suspectStatus:'動力及轉向可用',supportStatus:['動力及轉向可用','動力及轉向可用'],disabledFor:0,
     playerDriveability: 1,
     biome: config.scene,
     roadIndex: 0,
@@ -215,6 +218,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       targetBearing: 0,
       pit: 0,
       suspectDriveability: 1,
+      suspectStatus:'動力及轉向可用',supportStatus:['動力及轉向可用','動力及轉向可用'],disabledFor:0,
       playerDriveability: 1,
       biome: config.scene,
       roadIndex: 0,
@@ -303,9 +307,12 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <section className="hud-units">
       <small>UNIT COORDINATION</small><strong>01 {ROLE_LABELS[hud.assignments.player]}</strong>
       <span>02 {ROLE_LABELS[hud.assignments.unit2]} · 03 {ROLE_LABELS[hud.assignments.unit3]}</span>
+      {hud.assignments.unit2==='unavailable'&&<span>02：{hud.supportStatus[0]}</span>}
+      {hud.assignments.unit3==='unavailable'&&<span>03：{hud.supportStatus[1]}</span>}
       <span>目前指令：{hud.tacticalCommand ? COMMAND_LABELS[hud.tacticalCommand] : "正常追蹤"}</span>
       {hud.tacticalCommand === "take-primary" && <span>PIT 仍由玩家執行 · Q2 交回主追</span>}
-      <i>嫌犯可駕駛度 {Math.round(hud.suspectDriveability * 100)}%</i>
+      <i>嫌犯車況 {Math.round(hud.suspectDriveability * 100)}% · {hud.suspectStatus}</i>
+      {hud.disabledFor>0&&<span>失能停穩確認中 {Math.min(100,Math.round(hud.disabledFor/CONTROL.disabledHold*100))}%</span>}
       {hud.missionStage === "stopped-mobile" && <span>有效 PIT 已確認 · 尚待完成控制</span>}
       {hud.missionStage === "escaped-containment" && <span>嫌犯再次逃逸 · 保持追蹤</span>}
       <span className="control-reason">攔停：{hud.control.reason}{hud.heldFor > 0 ? `（${Math.min(100, Math.round(hud.heldFor / CONTROL.hold * 100))}%）` : ""}</span>

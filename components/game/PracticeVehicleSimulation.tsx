@@ -10,7 +10,7 @@ import {driveVehicleTarget} from '@/lib/vehicleDriver';
 import { VehicleModel } from './VehicleModel';
 import type { PracticeRuntime } from './practiceRuntime';
 import { PRACTICE, outsidePractice, practiceSpeed, type PracticeConfig } from '@/lib/practiceConfig';
-import { SUSPECT, VEHICLES, WEATHER } from '@/lib/gameConfig';
+import { SUSPECT, WEATHER } from '@/lib/gameConfig';
 import { stepSuspectDecision } from '@/lib/suspectDriving';
 import { applyPlayerForces } from '@/lib/playerVehicleForces';
 import { applyPitTargetControl } from '@/lib/pitTargetControl';
@@ -19,7 +19,8 @@ import { normalizeAngle } from '@/lib/gameRules';
 import { observeDiagnostic, closeContactDiagnostic, outcomeSample, updateDiagnostic } from '@/lib/pitDiagnostics';
 import { observeContactEpisode, finishContactEpisode } from '@/lib/pitContactEpisode';
 import { physicalContactSample } from '@/lib/physicalContactSample';
-import { applyImpactDamage, vehicleCanContinue, vehicleDriveability } from '@/lib/vehicleDamage';
+import { vehicleCanContinue, vehicleDriveability } from '@/lib/vehicleDamage';
+import { sampleCollisionDamage } from '@/lib/vehicleCollisionDamage';
 import { cancelCruise, resetPlayerDriving } from '@/lib/playerDriving';
 
 function frame(body:RapierRigidBody) {return readVehicleFrame(body,getVehiclePhysics(body)?.lastYaw??0);}
@@ -50,6 +51,8 @@ export function PracticeVehicleSimulation({runtime,keys,config,zones,onUpdate}:{
     if(!p||!s||state.phase!=='playing') return;
     for(const body of [p,s]){const core=getVehiclePhysics(body);if(core)sampleVehiclePhysics(core,world.timestep);}
     const pf=frame(p),sf=frame(s),pp=p.translation(),sp=s.translation(),pre=previous.current??{player:pf,suspect:sf};
+    const damages=sampleCollisionDamage(world,[{body:p,kind:config.vehicle,damage:state.playerDamage,before:pre.player},{body:s,kind:'suspect',damage:state.suspectDamage,before:pre.suspect}],state.damageEpisodes,state.elapsed);
+    state.playerDamage=damages[0];state.suspectDamage=damages[1];
     state.player=snapshot(p);
     state.suspect=snapshot(s);
     const contact=physicalContactSample(world,p,s,pf,sf,pre,config.vehicle,true);
@@ -59,11 +62,6 @@ export function PracticeVehicleSimulation({runtime,keys,config,zones,onUpdate}:{
     const episode=state.contactEpisodes.current;
     if(contact&&episode) {
       if(decision.started||episode.diagnosticId)observeDiagnostic(state.diagnostics,contact,episode,state.elapsed,decision.changed);
-      if(decision.damage) {
-        const impulse=Math.max(2,contact.normalSpeed*2);
-        state.suspectDamage=applyImpactDamage(state.suspectDamage,{impulse,localX:contact.localX,localZ:contact.localZ,halfWidth:SUSPECT.width/2,halfLength:SUSPECT.length/2});
-        state.playerDamage=applyImpactDamage(state.playerDamage,{impulse:impulse*.72,localX:contact.playerLocalX,localZ:contact.playerLocalZ,halfWidth:VEHICLES[config.vehicle].width/2,halfLength:VEHICLES[config.vehicle].length/2});
-      }
       if(decision.unsafe)state.candidate=null;
       if(decision.promoted)state.candidate={startYaw:pre.suspect.yaw,startSpeed:Math.hypot(pre.suspect.velocityX,pre.suspect.velocityZ),expires:state.elapsed+V2_PIT.window,contactTime:world.timestep};
     }

@@ -12,7 +12,15 @@ export interface ControlAssessment {
   reason: string;
   nodes: number;
 }
-export const CONTROL = { speed: .65, blockerSpeed: .45, angularSpeed: .12, hold: 1.2, disabledHold: 1.2, interval: .1, maxNodes: 180, step: .75, radius: 4.5, escapeDistance: 6 } as const;
+export const CONTROL = { speed: .65, disabledSpeed:.2, disabledVerticalSpeed:.15, blockerSpeed: .45, angularSpeed: .12, hold: 1.2, disabledHold: 1.2, interval: .1, maxNodes: 180, step: .75, radius: 4.5, escapeDistance: 6 } as const;
+export function isDisabledVehicleSettled(input:{x:number;y:number;z:number;velocityX:number;velocityY:number;velocityZ:number;angularSpeed:number;groundedWheels:number;rolloverDisabled:boolean;groundContact:boolean;validPose:boolean;headingValid:boolean}):boolean {
+  return input.validPose&&(input.headingValid||input.rolloverDisabled)
+    && [input.x,input.y,input.z,input.velocityX,input.velocityY,input.velocityZ,input.angularSpeed,input.groundedWheels].every(Number.isFinite)
+    && Math.hypot(input.velocityX,input.velocityZ)<CONTROL.disabledSpeed
+    && Math.abs(input.velocityY)<CONTROL.disabledVerticalSpeed
+    && Math.abs(input.angularSpeed)<CONTROL.angularSpeed
+    && (input.groundedWheels>=2||(input.rolloverDisabled&&input.groundContact));
+}
 export const initialControl = (): ControlAssessment => ({ status: "uncertain", reason: "等待車輛與道路資料", nodes: 0 });
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 const cross = (a: Point, b: Point, c: Point) => (b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
@@ -137,7 +145,7 @@ export function assessVehicleControl(suspect: ControlCar, blockers: readonly Con
   return answer("uncertain",nearby.some(c=>!stationary(c))?"封鎖車仍在移動，不能視為穩定障礙":"暫時受阻，尚無完整封鎖證據；仍在評估",nodes);
 }
 
-export function advanceControlTimers(previous:{heldFor:number;disabledFor:number}, assessment:ControlAssessment, driveable:boolean, speed:number, dt:number, paused=false) {
+export function advanceControlTimers(previous:{heldFor:number;disabledFor:number}, assessment:ControlAssessment, driveable:boolean, speed:number, dt:number, paused=false, disabledSettled=false) {
   if(paused) return {...previous};
-  return {heldFor:assessment.status==="blocked"?previous.heldFor+dt:0,disabledFor:!driveable&&assessment.status!=="moving"&&Number.isFinite(speed)&&speed<CONTROL.speed?previous.disabledFor+dt:0};
+  return {heldFor:assessment.status==="blocked"?previous.heldFor+dt:0,disabledFor:!driveable&&disabledSettled&&Number.isFinite(speed)&&speed<CONTROL.disabledSpeed?previous.disabledFor+dt:0};
 }

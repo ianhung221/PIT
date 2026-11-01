@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import { assessVehicleControl, controlRoadGeometry, advanceControlTimers, CONTROL } from "../lib/vehicleControlAssessment.ts";
+import { assessVehicleControl, controlRoadGeometry, advanceControlTimers, isDisabledVehicleSettled, CONTROL } from "../lib/vehicleControlAssessment.ts";
 import { pitMissionResolution } from "../lib/pitContact.ts";
 import { roadSections } from "../lib/roadGeometry.ts";
 import { generateRoad } from "../lib/proceduralMap.ts";
@@ -68,6 +68,18 @@ test("fixed elapsed-time gates reset when an exit opens; pause/restart/disabled 
   }
   assert.deepEqual(advanceControlTimers({heldFor:1,disabledFor:1},{status:"moving"},false,5,.1),{heldFor:0,disabledFor:0});
   assert.equal(advanceControlTimers({heldFor:0,disabledFor:1},{status:"moving"},false,0,.1).disabledFor,0,"rotation alone also prevents disabled-stop completion");
+});
+test('disabled settling independently validates target motion and physical ground support',()=>{
+  const sample={x:0,y:0,z:0,velocityX:0,velocityY:0,velocityZ:0,angularSpeed:0,groundedWheels:4,rolloverDisabled:false,groundContact:false,validPose:true,headingValid:true};
+  assert.equal(isDisabledVehicleSettled(sample),true);
+  for(const change of [{velocityX:.2},{velocityY:.15},{angularSpeed:.12},{velocityZ:NaN},{x:NaN},{validPose:false},{headingValid:false},{groundedWheels:1}])assert.equal(isDisabledVehicleSettled({...sample,...change}),false);
+  assert.equal(isDisabledVehicleSettled({...sample,groundedWheels:0,rolloverDisabled:true}),false);
+  assert.equal(isDisabledVehicleSettled({...sample,groundedWheels:0,rolloverDisabled:true,groundContact:true}),true);
+  let timers={heldFor:0,disabledFor:0};
+  for(let i=0;i<73;i++)timers=advanceControlTimers(timers,{status:'uncertain',reason:'other car invalid',nodes:0},false,0,1/60,false,isDisabledVehicleSettled(sample));
+  assert.equal(pitMissionResolution(false,0,timers.disabledFor,timers.heldFor),'disabled');
+  const moving=isDisabledVehicleSettled({...sample,angularSpeed:.2});
+  assert.equal(advanceControlTimers(timers,{status:'uncertain',reason:'other car invalid',nodes:0},false,0,1/60,false,moving).disabledFor,0);
 });
 test("Rapier whole-body parking geometry agrees with the enclosure certificate and opened-side counterexample",async()=>{
   await RAPIER.init();const world=new RAPIER.World({x:0,y:0,z:0});

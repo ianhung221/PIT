@@ -40,7 +40,7 @@ export function physicalPitOutcome(startYaw: number, yaw: number, startPlanarSpe
 
 export function pitMissionResolution(driveable: boolean, planarSpeed: number, disabledFor: number, heldFor: number): "disabled" | "contained" | null {
   // Mission control is independent from the historical PIT quality assessment.
-  if (!driveable && planarSpeed < CONTROL.speed && disabledFor >= CONTROL.disabledHold) return "disabled";
+  if (!driveable && planarSpeed < CONTROL.disabledSpeed && disabledFor >= CONTROL.disabledHold) return "disabled";
   if (planarSpeed < CONTROL.speed && heldFor >= CONTROL.hold) return "contained";
   return null;
 }
