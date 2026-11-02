@@ -46,7 +46,8 @@ function RoadTile({ segment, section, config }: { segment: RoadSegment; section:
     quad(pavement, section.startLeft, section.startRight, section.endLeft, section.endRight, ROAD_SURFACE_Y);
     const startScale = 100 / (segment.startWidth ?? segment.width);
     const endScale = 100 / (segment.endWidth ?? segment.width);
-    quad(ground, alongRoad(section, 0, -startScale), alongRoad(section, 0, startScale), alongRoad(section, 1, -endScale), alongRoad(section, 1, endScale), SHOULDER_SURFACE_Y);
+    quad(ground, alongRoad(section, 0, -startScale), section.startLeft, alongRoad(section, 1, -endScale), section.endLeft, SHOULDER_SURFACE_Y);
+    quad(ground, section.startRight, alongRoad(section, 0, startScale), section.endRight, alongRoad(section, 1, endScale), SHOULDER_SURFACE_Y);
     for (const side of [-.97, .97]) strip(markings, alongRoad(section, 0, side), alongRoad(section, 1, side), .12, -.49);
     // Six 6 m dashes per 72 m segment. One merged mesh, including highway lanes.
     for (const lane of segment.biome === "highway" ? [-1 / 3, 1 / 3] : [0]) {
