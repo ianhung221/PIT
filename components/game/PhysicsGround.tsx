@@ -25,7 +25,10 @@ export function PhysicsGround({ sections, height, halfSize = 1250, color = "#454
   return <group name="bearing-ground">
     <mesh receiveShadow position={[bounds.center[0], surfaceY, bounds.center[1]]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[bounds.halfSize[0] * 2, bounds.halfSize[1] * 2]} />
-      <meshStandardMaterial color={color} />
+      {/* The large fallback plane competes with the raised road in the depth
+          buffer at aerial distance. Bias only its rendering behind the road;
+          the visual height and the bearing collider remain unchanged. */}
+      <meshStandardMaterial color={color} polygonOffset={!!sections?.length} polygonOffsetFactor={32} polygonOffsetUnits={32} />
     </mesh>
     <RigidBody type="fixed" name="bearing-ground-body" colliders={false}>
       <CuboidCollider

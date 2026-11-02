@@ -82,9 +82,13 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
   onFinish: (data: { result: "success" | "failed"; outcome: MissionOutcome }) => void;
 }) {
   const fogColor = config.time === "night" ? SCENES[config.scene].fogNight : SCENES[config.scene].fogDay;
+  // The airborne camera looks through a longer path to the roadway. Preserve
+  // weather fog while keeping the same roadway readable from above.
+  const aerialWeather = cameraMode === 'auto' && config.weather !== 'clear';
+  const visibility = WEATHER[config.weather].visibility;
   return <>
     <color attach="background" args={[fogColor]} />
-    <fog attach="fog" args={[fogColor, 35 * WEATHER[config.weather].visibility, 230 * WEATHER[config.weather].visibility]} />
+    <fog attach="fog" args={[fogColor, (aerialWeather ? 55 : 35) * visibility, (aerialWeather ? 310 : 230) * visibility]} />
     <ambientLight intensity={config.time === "night" ? .3 : 1.2} />
     <directionalLight castShadow position={[15, 28, 10]} intensity={config.time === "night" ? .42 : 2.1} color={config.time === "night" ? "#85a7d9" : "#fff1cc"} />
     <Physics gravity={[0, -9.81, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused>

@@ -23,12 +23,24 @@ export function missionPitRisk(config: MissionConfig, segment: RoadSegment, susp
     offenseSeverity: .86, supportUnits, targetClass: "car" };
 }
 
-// Preview the next bend/junction so braking produces an opportunity before it.
-export function suspectRoadCruise(segment: RoadSegment, ahead: RoadSegment, grip: number, pursuitBoost = 0) {
+// Driving pace is independent of PIT authorization. Preview the next actual
+// bend/junction so braking starts early, including on slippery roads.
+export function suspectRoadCruise(segment: RoadSegment, ahead: RoadSegment, grip: number, pursuitBoost = 0, distanceToAhead = 0) {
   const base = SCENES[segment.biome].aiSpeed * (.84 + grip * .16) + pursuitBoost;
-  const caution = [segment, ahead].some(s => s.kind === "curve" || s.kind === "junction" || s.risk > .28);
-  const margin = grip < .65 ? .5 : grip < .9 ? .66 : .72;
-  return caution ? Math.min(base, maxPitSpeed(grip) / 3.6 * margin) : base;
+  const availableGrip = Math.max(0, Math.min(1, grip));
+  let speed = base;
+  const limitFor=(section:RoadSegment) => {
+    let limit=base;
+    if (section.kind === 'junction') limit = Math.min(limit, 9 + 7 * availableGrip);
+    const turn = Math.abs(section.turn);
+    if (turn > 1e-6) limit = Math.min(limit, 13 + 8 * availableGrip - Math.min(4, turn * 35));
+    return limit;
+  };
+  speed=Math.min(speed,limitFor(segment));
+  const distance=Number.isFinite(distanceToAhead)?Math.max(0,distanceToAhead):0;
+  const comfortableBraking=1 + 3 * availableGrip;
+  const previewLimit=limitFor(ahead);
+  return Math.min(speed,Math.sqrt(previewLimit*previewLimit+2*comfortableBraking*distance));
 }
 
 export function evaluatePitRisk(input: PitRiskInput): PitRiskDecision {

@@ -280,7 +280,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const steeringYaw = effectiveMode === "reversing" ? suspectReverseEscapeYaw(localRoadX) : desiredYaw;
     const steeringYawError = normalizeAngle(steeringYaw - suspectFrame.yaw);
     const pursuitBoost = distanceToPlayer < 17 ? 3 : 0;
-    const baseCruise = suspectRoadCruise(segment, roadTarget(state.road, state.suspectRoadIndex, 1), grip, pursuitBoost);
+    const alongSegment=(suspectFrame.x-segment.x)*-Math.sin(segment.yaw)+(suspectFrame.z-segment.z)*-Math.cos(segment.yaw);
+    const distanceToAhead=Math.max(0,segment.length/2-alongSegment);
+    const baseCruise = suspectRoadCruise(segment, roadTarget(state.road, state.suspectRoadIndex, 1), grip, pursuitBoost, distanceToAhead);
     let suspectTargetSpeed = baseCruise * suspectForwardSpeedScale(yawError) * (.45 + suspectDriveability * .55) * decision.speedScale;
     if (!suspectCanDrive || (state.pitQualified && state.containmentElapsed < 3.2)) suspectTargetSpeed = 0;
     if (effectiveMode === "braking") suspectTargetSpeed = 0;

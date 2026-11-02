@@ -19,21 +19,27 @@ export function applySeverityDamage(current:VehicleDamage,impact:ImpactInput,sev
   const rear = impact.localZ > impact.halfLength * .3;
   const left = impact.localX < 0;
   const wheelHit = Math.abs(impact.localX) > impact.halfWidth * .45;
+  // A front corner primarily loads the bumper and wheel area, whereas a
+  // central frontal impact reaches the engine bay more directly. Interpolate
+  // continuously to avoid a damage cliff at a collider-strip boundary.
+  const centrality = Math.max(0, Math.min(1, (1 - Math.abs(impact.localX) / Math.max(impact.halfWidth, 1e-6)) / .55));
+  const frontWeight = .22 + .78 * centrality;
+  const cornerWheelWeight = front ? .35 + .65 * centrality : 1;
   const next = { ...current };
   next.body = clampHealth(next.body - severity * .5);
-  next.alignment = clampHealth(next.alignment - severity * (wheelHit ? .72 : .28));
+  next.alignment = clampHealth(next.alignment - severity * (wheelHit ? .72 * cornerWheelWeight : .28));
   if (front) {
-    next.engine = clampHealth(next.engine - severity * .62);
-    next.cooling = clampHealth(next.cooling - severity * .8);
-    next.steering = clampHealth(next.steering - severity * .64);
+    next.engine = clampHealth(next.engine - severity * .62 * frontWeight);
+    next.cooling = clampHealth(next.cooling - severity * .8 * frontWeight);
+    next.steering = clampHealth(next.steering - severity * .64 * frontWeight);
   }
   if (rear) {
     if (left) next.rearLeftGrip = clampHealth(next.rearLeftGrip - severity * .86);
     else next.rearRightGrip = clampHealth(next.rearRightGrip - severity * .86);
   }
   if (wheelHit && !rear) {
-    if (left) next.frontLeftGrip = clampHealth(next.frontLeftGrip - severity * .78);
-    else next.frontRightGrip = clampHealth(next.frontRightGrip - severity * .78);
+    if (left) next.frontLeftGrip = clampHealth(next.frontLeftGrip - severity * .78 * cornerWheelWeight);
+    else next.frontRightGrip = clampHealth(next.frontRightGrip - severity * .78 * cornerWheelWeight);
   }
   return next;
 }
