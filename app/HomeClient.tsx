@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { QualityId, SceneId, TimeId, VehicleId, WeatherId, SuspectDifficulty } from "@/lib/gameConfig";
 import { makeMissionSeed } from "@/lib/seededRandom";
 import type { GameSession } from '@/lib/practiceConfig';
+import {networkCode,parseMapCode} from '@/lib/roadNetwork';
 
 const PitGame = dynamic(() => import("@/components/game/PitGameV2").then((module) => module.PitGameV2), { ssr: false });
 const PracticeGame = dynamic(() => import('@/components/game/PracticeGame').then(m=>m.PracticeGame), {ssr:false});
@@ -27,13 +28,15 @@ const vehicles = [
   { id: "suv", label: "警用 SUV", detail: "重量穩定", stat: "B" },
 ];
 
-export function HomeClient() {
+export function HomeClient({networkEnabled=false}:{networkEnabled?:boolean}={}) {
   const [scene, setScene] = useState<SceneId>("highway");
   const [weather, setWeather] = useState<WeatherId>("rain");
   const [time, setTime] = useState<TimeId>("night");
   const [vehicle, setVehicle] = useState<VehicleId>("patrol");
   const [quality, setQuality] = useState<QualityId>("high");
-  const [seed, setSeed] = useState(() => makeMissionSeed());
+  const [seed, setSeed] = useState(() => networkEnabled?networkCode(makeMissionSeed()):makeMissionSeed());
+  const [navigation,setNavigation]=useState(true);
+  const parsed=networkEnabled?parseMapCode(seed):null;
   const [mode,setMode]=useState<'mission'|'practice'>('mission');
   const [difficulty,setDifficulty]=useState<SuspectDifficulty>('normal');
   const [practiceSpeed,setPracticeSpeed]=useState<30|50|70>(50);
@@ -60,17 +63,17 @@ export function HomeClient() {
       </header>
       <section className="hero-copy">
         <p className="eyebrow">TACTICAL INTERVENTION SIMULATOR</p><h1>終止<br /><em>追逐。</em></h1>
-        <p className="lede">{mode==='mission'?'選擇你的單位與作戰環境，在限時追逐中評估 PIT 與攔停結果。':'在封閉空地反覆練習，觀察實際接觸與失控條件。沒有倒數，按開始後才會行駛。'}</p>
+        <p className="lede">{mode==='mission'?(networkEnabled?'跨越城鎮、鄉間與高速道路追逐，取得 PIT 授權並完成攔停。':'選擇你的單位與作戰環境，在限時追逐中評估 PIT 與攔停結果。'):'在封閉空地反覆練習，觀察實際接觸與失控條件。沒有倒數，按開始後才會行駛。'}</p>
       </section>
       <section className="setup-panel" aria-label="追逐任務設定">
         <div className="panel-heading"><span>MISSION CONFIGURATION</span><strong>任務設定</strong></div>
-        <fieldset><legend>模式</legend><div className="segmented"><button aria-pressed={mode==='mission'} className={mode==='mission'?'active':''} onClick={()=>setMode('mission')}>一般任務</button><button className={mode==='practice'?'active':''} aria-pressed={mode==='practice'} onClick={()=>setMode('practice')}>PIT 練習</button></div><small>{mode==='mission'?'90 秒追捕，玩家與兩台後援；PIT 與攔停分開評估。':'封閉空地、白天、無後援及倒數。'}</small></fieldset>
+        <fieldset><legend>模式</legend><div className="segmented"><button aria-pressed={mode==='mission'} className={mode==='mission'?'active':''} onClick={()=>setMode('mission')}>一般任務</button><button className={mode==='practice'?'active':''} aria-pressed={mode==='practice'} onClick={()=>setMode('practice')}>PIT 練習</button></div><small>{mode==='mission'?(networkEnabled?'無限時追捕，玩家與兩台後援；PIT 與攔停分開評估。':'90 秒追捕，玩家與兩台後援；PIT 與攔停分開評估。'):'封閉空地、白天、無後援及倒數。'}</small></fieldset>
         <fieldset><legend>嫌犯難度</legend><div className="segmented segmented--three">{(['basic','normal','advanced'] as const).map(level=><button key={level} aria-pressed={difficulty===level} className={difficulty===level?'active':''} onClick={()=>setDifficulty(level)}>{level==='basic'?'基礎':level==='normal'?'一般':'進階'}</button>)}</div><small>{difficulty==='basic'?'練習場定速直行；任務沿道路行駛。':difficulty==='normal'?'目標偶爾改變行駛位置。':'目標察覺接近後可能變線或減速，反應有延遲與失誤。'}</small></fieldset>
         {mode==='practice'&&<div className="split-fields"><fieldset><legend>練習初速</legend><select aria-label="練習初速" value={practiceSpeed} onChange={e=>setPracticeSpeed(Number(e.target.value) as 30|50|70)}>{[30,50,70].map(v=><option key={v} value={v}>{v} km/h</option>)}</select></fieldset><fieldset><legend>練習天候</legend><select aria-label="練習天候" value={practiceWeather} onChange={e=>setPracticeWeather(e.target.value as WeatherId)}>{weathers.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></fieldset></div>}
         {mode==='mission'&&<>
-        <fieldset><legend><b>01</b> 作戰區域</legend><div className="option-grid option-grid--three">
+        {networkEnabled?<fieldset><legend><b>01</b> 多城鎮路網</legend><small>兩至三個城鎮，以鄉間道路與高速道路相連。任務直接從追逐開始。</small><div className="segmented"><button aria-pressed={navigation} className={navigation?'active':''} onClick={()=>setNavigation(true)}>路線輔助開</button><button aria-pressed={!navigation} className={!navigation?'active':''} onClick={()=>setNavigation(false)}>路線輔助關</button></div><small>目前使用即時目標位置；非模擬通報模式。</small></fieldset>:<fieldset><legend><b>01</b> 作戰區域</legend><div className="option-grid option-grid--three">
           {scenes.map((item) => <button key={item.id} className={scene === item.id ? "option active" : "option"} onClick={() => setScene(item.id as SceneId)}><span className="option-code">{item.icon}</span><strong>{item.label}</strong><small>{item.detail}</small></button>)}
-        </div></fieldset>
+        </div></fieldset>}
         <div className="split-fields">
           <fieldset><legend><b>02</b> 時段</legend><div className="segmented"><button className={time === "day" ? "active" : ""} onClick={() => setTime("day")}>白天</button><button className={time === "night" ? "active" : ""} onClick={() => setTime("night")}>黑夜</button></div></fieldset>
           <fieldset><legend><b>03</b> 天候</legend><select value={weather} onChange={(event) => setWeather(event.target.value as WeatherId)} aria-label="選擇天候">{weathers.map((item) => <option key={item.id} value={item.id}>{item.label} — {item.detail}</option>)}</select></fieldset>
@@ -79,9 +82,9 @@ export function HomeClient() {
         <fieldset><legend><b>04</b> 選擇攔截單位</legend><div className="option-grid option-grid--vehicles">
           {vehicles.map((item) => <button key={item.id} className={vehicle === item.id ? "vehicle-option active" : "vehicle-option"} onClick={() => setVehicle(item.id as VehicleId)}><span className="vehicle-silhouette">{item.stat}</span><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}
         </div></fieldset>
-        {mode==='mission'&&<fieldset className="seed-field"><legend><b>05</b> 任務地圖代碼</legend><div><input value={seed} maxLength={32} onChange={(event) => setSeed(event.target.value.toUpperCase())} aria-label="任務地圖代碼" /><button type="button" onClick={() => setSeed(makeMissionSeed())}>隨機</button></div><small>相同代碼會重現相同道路排列</small></fieldset>}
+        {mode==='mission'&&<fieldset className="seed-field"><legend><b>05</b> 任務地圖代碼</legend><div><input value={seed} maxLength={networkEnabled?53:32} onChange={(event) => setSeed(event.target.value.toUpperCase())} aria-label="任務地圖代碼" /><button type="button" onClick={() => setSeed(networkEnabled?networkCode(makeMissionSeed()):makeMissionSeed())}>隨機</button></div><small>相同版本與代碼重現相同道路排列，不保證重播車輛行為。</small>{parsed&&parsed.kind!=='valid'&&<p role="alert">{parsed.message}{parsed.kind==='legacy'&&<button onClick={()=>setSeed(networkCode(parsed.seed))}>以原種子建立新版地圖</button>}</p>}</fieldset>}
         <fieldset className="quality-field"><legend><b>06</b> 畫面品質</legend><div className="segmented segmented--three">{(["low", "medium", "high"] as QualityId[]).map((value) => <button key={value} className={quality === value ? "active" : ""} onClick={() => setQuality(value)}>{value === "low" ? "低" : value === "medium" ? "中" : "高"}</button>)}</div><small>低畫質會關閉側鏡與即時陰影</small></fieldset>
-        <button className="deploy-button" type="button" onClick={() => {const behaviorSeed=makeMissionSeed();setMission(mode==='mission'?{mode,config:{ scene, weather, time, vehicle, quality, difficulty, behaviorSeed, seed: seed.trim() || makeMissionSeed() }}:{mode,config:{vehicle,quality,difficulty,behaviorSeed,speedKph:practiceSpeed,weather:practiceWeather}});}}><span>{mode==='mission'?'部署攔截單位':'進入練習場'}</span><small>ENTER TO DEPLOY</small><b>→</b></button>
+        <button className="deploy-button" type="button" disabled={mode==='mission'&&networkEnabled&&parsed?.kind!=='valid'} onClick={() => {const behaviorSeed=makeMissionSeed();setMission(mode==='mission'?{mode,config:{ scene, weather, time, vehicle, quality, difficulty, behaviorSeed,seed:parsed?.kind==='valid'?parsed.code:seed.trim()||makeMissionSeed(),...(networkEnabled?{mapMode:'network' as const,navigation}:{}) }}:{mode,config:{vehicle,quality,difficulty,behaviorSeed,speedKph:practiceSpeed,weather:practiceWeather}});}}><span>{mode==='mission'?'部署攔截單位':'進入練習場'}</span><small>ENTER TO DEPLOY</small><b>→</b></button>
         <p className="controls-hint"><kbd>↑</kbd><kbd>↓</kbd> 油門 / 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · {mode==='mission'?<><kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電</>:<><kbd>F</kbd> 巡航 · <kbd>P</kbd> 暫停</>}</p>
       </section>
       <footer><span>PRECISION IMMOBILIZATION TRAINING SYSTEM</span><span>BUILD 0.2 // TRAINING USE</span></footer>

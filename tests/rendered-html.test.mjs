@@ -16,7 +16,10 @@ test("renders the PIT Unit application shell", async () => {
   assert.match(html, /<title>PIT Unit/);
   assert.match(html, /manifest\.webmanifest/);
   assert.match(html, /zh-Hant/);
-  assert.match(html, /作戰區域/);
+  assert.match(html, /多城鎮路網/);
+  assert.match(html, /路線輔助開/);
+  assert.match(html, /無限時追捕/);
+  assert.doesNotMatch(html, /<legend><b>01<\/b> 作戰區域/);
   assert.match(html, /任務地圖代碼/);
   assert.match(html, /畫面品質/);
   assert.match(html, /無線電/);

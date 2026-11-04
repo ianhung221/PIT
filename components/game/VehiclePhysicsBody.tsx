@@ -5,9 +5,9 @@ import { chassisShapes,vehicleSpawnHeight,CHASSIS_COLLISION_GROUPS,type PhysicsV
 import { createVehiclePhysics,removeVehiclePhysics,type VehiclePhysics } from '@/lib/vehiclePhysics';
 
 /** Chassis, mass distribution and controller lifecycle shared by every driver. */
-export function VehiclePhysicsBody({bodyRef,kind,name,x=0,z=0,groundY=-.505,velocity=[0,0,0],children}:{
+export function VehiclePhysicsBody({bodyRef,kind,name,x=0,z=0,yaw=0,groundY=-.505,velocity=[0,0,0],children}:{
   bodyRef:RefObject<RapierRigidBody|null>;kind:PhysicsVehicleKind;name:string;
-  x?:number;z?:number;groundY?:number;velocity?:[number,number,number];children:ReactNode;
+  x?:number;z?:number;yaw?:number;groundY?:number;velocity?:[number,number,number];children:ReactNode;
 }) {
   const {world}=useRapier();const core=useRef<VehiclePhysics|null>(null);
   // Layout cleanup precedes Physics' passive world.free() on full scene exit.
@@ -18,7 +18,7 @@ export function VehiclePhysicsBody({bodyRef,kind,name,x=0,z=0,groundY=-.505,velo
     return()=>{removeVehiclePhysics(vehicle);if(core.current===vehicle)core.current=null;};
   },[world,bodyRef,kind]);
   return <RigidBody ref={bodyRef} name={name} colliders={false}
-    position={[x,vehicleSpawnHeight(kind,groundY),z]} linearVelocity={velocity}
+    position={[x,vehicleSpawnHeight(kind,groundY),z]} rotation={[0,yaw,0]} linearVelocity={velocity}
     linearDamping={0} angularDamping={.1} ccd canSleep={false}>
     {chassisShapes(kind).map((shape,i)=><CuboidCollider key={i} args={shape.halfExtents}
       position={shape.position} mass={shape.massKg} collisionGroups={CHASSIS_COLLISION_GROUPS}

@@ -6,7 +6,7 @@ import {
   useAfterPhysicsStep,
   type RapierRigidBody,
 } from "@react-three/rapier";
-import { useRef, type MutableRefObject } from "react";
+import { useRef, useState, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { VehicleModel } from "@/components/game/VehicleModel";
 import { VehiclePhysicsBody } from './VehiclePhysicsBody';
@@ -22,7 +22,6 @@ import { physicalContactSample } from '@/lib/physicalContactSample';
 import type { V2Runtime, V2Result } from "@/components/game/v2Runtime";
 import { logRuntimeEvent, updateRadioFeedback, refreshPitAuthorization } from "@/components/game/v2Runtime";
 import {
-  SCENES,
   VEHICLES,
   WEATHER,
   type CameraMode,
@@ -50,6 +49,9 @@ import { vehicleCanContinue, vehicleCanPerformDriving, vehicleDriveability, vehi
 import { sampleCollisionDamage } from "@/lib/vehicleCollisionDamage";
 import type { MissionOutcome, RadioFeedback, RadioCommand } from "@/types/game";
 import type { PitAuthorization } from "@/types/game";
+import {escapeRoute,chaseRoute} from '@/lib/networkPursuit';
+import {locationSegment} from '@/lib/roadLocation';
+import {networkControlGeometry} from '@/lib/networkGeometry';
 
 type BodyFrame=VehicleFrame;
 function bodySnapshot(body:RapierRigidBody){
@@ -100,6 +102,7 @@ function desiredYawTo(fromX: number, fromZ: number, targetX: number, targetZ: nu
 }
 
 export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdate, onFinish }: SimulationProps) {
+  const [spawn]=useState(()=>({player:runtime.current.player,suspect:runtime.current.suspect,supports:runtime.current.supports.map(c=>({...c}))}));
   const controlGeometryRef = useRef<ReturnType<typeof controlRoadGeometry> | null>(null);
   const playerRef = useRef<RapierRigidBody>(null);
   const suspectRef = useRef<RapierRigidBody>(null);
@@ -150,11 +153,14 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         const snap=core?physicsSnapshotFromFrame(core,f):bodySnapshot(body);
         return {...snap,angularSpeed:f.angularSpeed};
       });
-      const geometry=controlGeometryRef.current ??=controlRoadGeometry(roadSections(state.road));
+      // Moving cars return before enclosure geometry is consulted. Keep the same
+      // assessment/timer path while avoiding a world-object scan every moving step.
+      const moving=Math.hypot(cars[1].speed,cars[1].lateralSpeed)>=CONTROL.speed||Math.abs(cars[1].angularSpeed)>=CONTROL.angularSpeed;
+      const geometry=moving?[]:state.road.network?networkControlGeometry(state.road.network,cars[1]):(controlGeometryRef.current ??=controlRoadGeometry(roadSections(state.road))).slice(Math.max(0,state.suspectRoadIndex-1),state.suspectRoadIndex+2);
       const due=state.elapsed-state.controlCheckedAt>=CONTROL.interval;
       const control=assessVehicleControl({...cars[1],model:'suspect'},[
         {...cars[0],model:config.vehicle},{...cars[2],model:'patrol'},{...cars[3],model:'suv'},
-      ],geometry.slice(Math.max(0,state.suspectRoadIndex-1),state.suspectRoadIndex+2),due?CONTROL.maxNodes:0);
+      ],geometry,due?CONTROL.maxNodes:0);
       if(due||control.status!=='uncertain'||state.control.status!=='open')state.control=control;
       if(due)state.controlCheckedAt=state.elapsed;
       const core=getVehiclePhysics(suspect),driveable=vehicleCanContinue(state.suspectDamage)&&!core?.disabled;
@@ -166,7 +172,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       const resolution=pitMissionResolution(driveable,speed,state.disabledFor,state.heldFor);
       if(resolution){logRuntimeEvent(state,resolution==='contained'?'攔停確認：實體出口封閉並穩定維持；不限定玩家或後援位置':'失能確認：嫌犯動力不可用且已穩定停下');finish('success',resolution);return;}
     }
-    if(state.elapsed>=90){finish('failed','failed');return;}
+    if(!state.road.network&&state.elapsed>=90){finish('failed','failed');return;}
     let solidContact=false;
     for(let i=0;i<player.numColliders();i++)world.contactPairsWith(player.collider(i),other=>{
       world.contactPair(player.collider(i),other,m=>{if(m.numSolverContacts())solidContact=true;});
@@ -226,9 +232,11 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const suspectPosition = suspect.translation();
     const suspectFrame = preImpact.current.suspect;
     state.suspectRoadIndex = closestRoadSegment(state.road, suspectPosition.x, suspectPosition.z, state.suspectRoadIndex);
-    const segment = state.road.segments[state.suspectRoadIndex];
+    const network=state.road.network;
+    const networkControl=network?escapeRoute(network,state.networkDrivers[0],bodySnapshot(suspect),state.elapsed,grip,state.decision.offset):null;
+    const segment = network?locationSegment(network,state.networkDrivers[0].location!):state.road.segments[state.suspectRoadIndex];
     refreshPitAuthorization(state, config, { ...state.suspect, speed:suspectFrame.forwardSpeed, lateralSpeed:suspectFrame.lateralSpeed });
-    const targetSegment = roadTarget(state.road, state.suspectRoadIndex, 2);
+    const targetSegment = network?segment:roadTarget(state.road, state.suspectRoadIndex, 2);
     const roadHalfWidth = segment.width / 2 - 1.25;
     const segmentRightX = Math.cos(segment.yaw);
     const segmentRightZ = -Math.sin(segment.yaw);
@@ -244,7 +252,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const laneTarget = THREE.MathUtils.clamp(laneWave + boundaryPressure, -roadHalfWidth * .7, roadHalfWidth * .7);
     const targetX = targetSegment.x + Math.cos(targetSegment.yaw) * laneTarget;
     const targetZ = targetSegment.z - Math.sin(targetSegment.yaw) * laneTarget;
-    const desiredYaw = desiredYawTo(suspectPosition.x, suspectPosition.z, targetX, targetZ);
+    const desiredYaw = networkControl?suspectFrame.yaw+networkControl.yawError:desiredYawTo(suspectPosition.x, suspectPosition.z, targetX, targetZ);
     const yawError = normalizeAngle(desiredYaw - suspectFrame.yaw);
     const planarSuspectSpeed = Math.hypot(suspectFrame.velocityX, suspectFrame.velocityZ);
     const boundaryRatio = Math.abs(localRoadX) / Math.max(.1, roadHalfWidth);
@@ -283,7 +291,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const alongSegment=(suspectFrame.x-segment.x)*-Math.sin(segment.yaw)+(suspectFrame.z-segment.z)*-Math.cos(segment.yaw);
     const distanceToAhead=Math.max(0,segment.length/2-alongSegment);
     const baseCruise = suspectRoadCruise(segment, roadTarget(state.road, state.suspectRoadIndex, 1), grip, pursuitBoost, distanceToAhead);
-    let suspectTargetSpeed = baseCruise * suspectForwardSpeedScale(yawError) * (.45 + suspectDriveability * .55) * decision.speedScale;
+    let suspectTargetSpeed = (networkControl?networkControl.speed:baseCruise * suspectForwardSpeedScale(yawError)) * (.45 + suspectDriveability * .55) * decision.speedScale;
     if (!suspectCanDrive || (state.pitQualified && state.containmentElapsed < 3.2)) suspectTargetSpeed = 0;
     if (effectiveMode === "braking") suspectTargetSpeed = 0;
     if (effectiveMode === "reversing") suspectTargetSpeed = -6 * grip;
@@ -365,6 +373,17 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       }
       const index = closestRoadSegment(state.road, position.x, position.z, state.supportRoadIndices[unit]);
       const car = { x: position.x, z: position.z, yaw: frame.yaw, speed: frame.forwardSpeed, lateralSpeed: frame.lateralSpeed };
+      if(network){
+        const role=unit===0?assignments.unit2:assignments.unit3;
+        const target=role==='primary'||state.tacticalCommand||Math.hypot(currentPlayer.x-currentSuspect.x,currentPlayer.z-currentSuspect.z)>65?currentSuspect:currentPlayer;
+        const neighbors=[currentPlayer,currentSuspect,state.supports[1-unit]];
+        const routeControl=chaseRoute(network,state.networkDrivers[unit+1],car,target,state.elapsed,grip,unit===0?16:30,neighbors);
+        const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip):null;
+        const control=maneuver??routeControl;
+        driveSupport(body,control.yawError,control.speed,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
+        state.supportArrivedFor[unit]=control.arrived?state.supportArrivedFor[unit]+dt:0;
+        return;
+      }
       const slot = supportSlot({ road: state.road, player: currentPlayer, suspect: currentSuspect, playerIndex: state.playerRoadIndex, suspectIndex: state.suspectRoadIndex, unit, role: unit === 0 ? assignments.unit2 : assignments.unit3, command: automaticBlockade ? "block-front" : state.tacticalCommand });
       const neighbors = [currentPlayer, currentSuspect, state.supports[1 - unit]];
       const maneuver = activeBlockade && state.supportAi[unit].mode === "driving"
@@ -378,7 +397,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     if (state.tacticalCommand && state.tacticalCommand !== "terminate" && state.elapsed - state.commandAt > .7 && !(state.radioFeedback?.command === "request-pit" && state.elapsed - state.radioFeedback.at < 3)) {
       const command = state.tacticalCommand;
       const arrived = state.supportArrivedFor[0] > .6 && (command === "prepare-pit" || command === "block-front" ? state.supportArrivedFor[1] > .6 : true);
-      const reasons=[support2,support3].map((body,i)=>getVehiclePhysics(body)?.disabled?`0${i+2} 穩定翻覆`:!vehicleCanContinue(state.supportDamage[i])?`0${i+2} 動力失能`:!vehicleCanPerformDriving(state.supportDamage[i])?`0${i+2} 轉向受損`:null).filter(Boolean);
+      const reasons=[support2,support3].map((body,i)=>getVehiclePhysics(body)?.disabled?`0${i+2} 穩定翻覆`:!vehicleCanContinue(state.supportDamage[i])?`0${i+2} 動力失能`:!vehicleCanPerformDriving(state.supportDamage[i])?`0${i+2} 轉向受損`:network&&state.networkDrivers[i+1].blocked?`0${i+2} 路線受阻`:null).filter(Boolean);
       const feedback = reasons.length?{phase:'unable' as const,message:`${reasons.join('、')}，無法完成目前協同指令`}:command === "block-front" ? blockadeFeedback(state.blockade) : tacticalFeedback(command, Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2, arrived, state.supportAi.some(ai => ai.mode !== "driving"));
       updateRadioFeedback(state, { command, phase: feedback.phase, message: `${COMMAND_LABELS[command]}・${RADIO_PHASE_LABELS[feedback.phase]}：${feedback.message}` });
     }
@@ -446,16 +465,16 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
   });
 
   return <>
-    <VehiclePhysicsBody bodyRef={playerRef} kind={config.vehicle} name="police-primary" z={8}>
+    <VehiclePhysicsBody bodyRef={playerRef} kind={config.vehicle} name="police-primary" x={spawn.player.x} z={spawn.player.z} yaw={spawn.player.yaw}>
       <VehicleModel police model={config.vehicle} unit="01" hideExterior={cameraMode === "driver"} />
     </VehiclePhysicsBody>
-    <VehiclePhysicsBody bodyRef={suspectRef} kind="suspect" name="suspect" x={.8} z={-24} velocity={[0,0,-SCENES[config.scene].aiSpeed*.72]}>
+    <VehiclePhysicsBody bodyRef={suspectRef} kind="suspect" name="suspect" x={spawn.suspect.x} z={spawn.suspect.z} yaw={spawn.suspect.yaw} velocity={[-Math.sin(spawn.suspect.yaw)*spawn.suspect.speed,0,-Math.cos(spawn.suspect.yaw)*spawn.suspect.speed]}>
       <VehicleModel />
     </VehiclePhysicsBody>
-    <VehiclePhysicsBody bodyRef={support2Ref} kind="patrol" name="police-support-2" x={-2.1} z={18} velocity={[0,0,-8]}>
+    <VehiclePhysicsBody bodyRef={support2Ref} kind="patrol" name="police-support-2" x={spawn.supports[0].x} z={spawn.supports[0].z} yaw={spawn.supports[0].yaw} velocity={[-Math.sin(spawn.supports[0].yaw)*spawn.supports[0].speed,0,-Math.cos(spawn.supports[0].yaw)*spawn.supports[0].speed]}>
       <VehicleModel police model="patrol" unit="02" />
     </VehiclePhysicsBody>
-    <VehiclePhysicsBody bodyRef={support3Ref} kind="suv" name="police-support-3" x={2.1} z={29} velocity={[0,0,-8]}>
+    <VehiclePhysicsBody bodyRef={support3Ref} kind="suv" name="police-support-3" x={spawn.supports[1].x} z={spawn.supports[1].z} yaw={spawn.supports[1].yaw} velocity={[-Math.sin(spawn.supports[1].yaw)*spawn.supports[1].speed,0,-Math.cos(spawn.supports[1].yaw)*spawn.supports[1].speed]}>
       <VehicleModel police model="suv" unit="03" />
     </VehiclePhysicsBody>
   </>;

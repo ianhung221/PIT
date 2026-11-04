@@ -7,6 +7,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraRig } from "@/components/game/CameraRig";
 import { CockpitView } from "@/components/game/CockpitView";
 import { ProceduralWorld } from "@/components/game/ProceduralWorld";
+import {NetworkWorld} from './NetworkWorld';
+import {Minimap} from './Minimap';
 import { RadioCommandWheel } from "@/components/game/RadioCommandWheel";
 import { V2VehicleSimulation, type V2HudData } from "@/components/game/V2VehicleSimulation";
 import { V2Weather } from "@/components/game/V2Weather";
@@ -33,7 +35,7 @@ const OUTCOME_COPY: Record<MissionOutcome, { eyebrow: string; title: string; det
   recovered: { eyebrow: "RECOVERED", title: "恢復追捕", detail: "嫌犯已從碰撞中恢復並繼續逃逸。" },
   "escaped-containment": { eyebrow: "CONTAINMENT FAILED", title: "包圍失敗", detail: "嫌犯車仍可行駛並突破封鎖。" },
   "unsafe-pit": { eyebrow: "POLICY VIOLATION", title: "未授權接觸", detail: "本次接觸不符合授權或安全條件，不列入有效 PIT。" },
-  failed: { eyebrow: "TARGET ESCAPED", title: "攔截失敗", detail: "任務時限已結束，請檢視決策紀錄後再試一次。" },
+  failed: { eyebrow: "PURSUIT ENDED", title: "追逐結束", detail: "本局未完成攔停，請檢視決策紀錄後再試一次。" },
   paused: { eyebrow: "OPERATION PAUSED", title: "任務暫停", detail: "準備好後繼續追逐。" },
 };
 
@@ -93,7 +95,7 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
     <directionalLight castShadow position={[15, 28, 10]} intensity={config.time === "night" ? .42 : 2.1} color={config.time === "night" ? "#85a7d9" : "#fff1cc"} />
     <Physics gravity={[0, -9.81, 0]} timeStep={1 / 60} maxCcdSubsteps={4} numSolverIterations={8} paused>
       <FixedPhysicsStepper running={()=>!paused && runtime.current.result==='playing'}/>
-      <ProceduralWorld runtime={runtime} config={config} />
+      {runtime.current.road.network?<NetworkWorld network={runtime.current.road.network} cars={runtime} weather={config.weather}/>:<ProceduralWorld runtime={runtime} config={config} />}
       <V2VehicleSimulation config={config} cameraMode={cameraMode} runtime={runtime} keys={keys} onUpdate={onUpdate} onFinish={onFinish} />
     </Physics>
     <V2Weather config={config} runtime={runtime} />
@@ -104,7 +106,13 @@ function ChaseScene({ config, runtime, keys, cameraMode, paused, onUpdate, onFin
 }
 
 export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: () => void }) {
-  const runtime = useRef<V2Runtime>(makeV2Runtime(config));
+  const [initialRuntime]=useState(()=>makeV2Runtime(config));
+  const runtime = useRef<V2Runtime>(initialRuntime);
+  useEffect(()=>{
+    if(!['localhost','127.0.0.1'].includes(location.hostname))return;
+    const w=window as unknown as Record<string,unknown>;w.__pitNetworkMission=()=>runtime.current;
+    return()=>{delete w.__pitNetworkMission;};
+  },[]);
   const [runId, setRunId] = useState(0);
   const [diagnosticDetails,setDiagnosticDetails]=useState(false);
   const [diagnostics,setDiagnostics]=useState(()=>makeDiagnostics('mission',JSON.stringify(config)));
@@ -135,7 +143,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     authorizationReason: "按住 Q，選擇「請求 PIT 授權」",
     assignments: coordinatePursuit({ pitQualified: false, suspectStopped: false, suspectDriveable: true, playerDriveability: 1 }),
   }));
-  const [time, setTime] = useState(90);
+  const [time, setTime] = useState(config.mapMode==='network'?0:90);
   const [radio, setRadio] = useState<RadioFeedback | null>(null);
   const [policy, setPolicy] = useState<{ authorization: V2Runtime["authorization"]; reason: string }>({ authorization: "unknown", reason: "按住 Q，選擇「請求 PIT 授權」" });
   const [debrief, setDebrief] = useState({ attempts: 0, successfulContacts: 0, unsafeContacts: 0, suspectDriveability: 1, events: [] as string[] });
@@ -154,9 +162,9 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   }, [result, keys]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTime(Math.max(0, 90 - runtime.current.elapsed)), 100);
+    const timer = window.setInterval(() => setTime(config.mapMode==='network'?runtime.current.elapsed:Math.max(0, 90 - runtime.current.elapsed)), 100);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [config.mapMode]);
 
   const handleRadio = useCallback((command: RadioCommand) => {
     const state = runtime.current;
@@ -230,7 +238,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       authorizationReason: "按住 Q，選擇「請求 PIT 授權」",
       assignments: coordinatePursuit({ pitQualified: false, suspectStopped: false, suspectDriveable: true, playerDriveability: 1 }),
     });
-    setTime(90);
+    setTime(config.mapMode==='network'?0:90);
     setDiagnostics(makeDiagnostics('mission',JSON.stringify(config)));
     setSummaryReason('');
     setShowEvents(false);
@@ -243,11 +251,12 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     setRunId((value) => value + 1);
   };
 
-  const authorization = policy.authorization==='authorized' && hud.authorizationExpires<90-time ? 'hold' : policy.authorization;
+  const elapsed=config.mapMode==='network'?time:90-time;
+  const authorization = policy.authorization==='authorized' && hud.authorizationExpires<elapsed ? 'hold' : policy.authorization;
   const quality = QUALITY_SETTINGS[config.quality ?? "high"];
   const resultCopy = OUTCOME_COPY[result === "paused" ? "paused" : outcome];
   const policyClass = authorization === "authorized" ? "authorized" : authorization === "unknown" ? "unknown" : "restricted";
-  const mapCode = config.scene.toUpperCase() + "-" + (config.seed?.trim() || "PIT-TRAINING");
+  const mapCode = initialRuntime.road.code;
 
   return <main className="game-shell">
     <Canvas shadows={config.quality !== "low"} camera={{ fov: 56, near: .1, far: 430 }} dpr={quality.dpr} gl={{ antialias: config.quality !== "low" }}>
@@ -281,6 +290,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       />
     </Canvas>
     <div className="game-vignette" />
+    {initialRuntime.road.network&&<Minimap key={runId} network={initialRuntime.road.network} runtime={runtime} enabled={config.navigation!==false}/>}
     <header className="game-top">
       <div className="game-logo"><b>PIT</b> UNIT V2</div>
       <div className="objective"><small>TRAINING OBJECTIVE</small><strong>取得授權、執行有效 PIT、完成包圍</strong></div>
@@ -297,7 +307,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
         <div className="driving-reason">{hud.driving.reason}</div>
       </div>}
     </section>
-    <section className="hud-timer"><small>TIME REMAINING</small><strong>{Math.floor(time / 60).toString().padStart(2, "0")}:{Math.floor(time % 60).toString().padStart(2, "0")}</strong></section>
+    <section className="hud-timer"><small>{config.mapMode==='network'?'經過時間':'TIME REMAINING'}</small><strong>{Math.floor(time / 60).toString().padStart(2, "0")}:{Math.floor(time % 60).toString().padStart(2, "0")}</strong></section>
     <section className="hud-target">
       <small>TARGET / {hud.biome.toUpperCase()}</small><strong>{hud.distance.toFixed(1)} M</strong>
       <PitDiagnosticPanel data={diagnostics} details={diagnosticDetails}/>
@@ -330,8 +340,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     <div className="map-code">MAP {mapCode}</div>
     <div className="game-controls"><kbd>↑</kbd> 加速 · <kbd>↓</kbd> 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · <kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電 · <kbd>P</kbd> 暫停</div>
     <RadioCommandWheel disabled={result !== "playing"} onCommand={handleRadio} />
-    {result === "playing" && hud.contactFeedback && 90 - time - hud.contactFeedback.at < 4 && <div className={"contact-feedback contact-feedback--" + hud.contactFeedback.classification} role="status" aria-live="polite">{hud.contactFeedback.message}</div>}
-    {result === "playing" && <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && 90 - time - radio.at < 8 ? `先前通訊 ${radio.at.toFixed(1)}s：${radio.message}${radio.command==='request-pit'?'（目前狀態以左上授權為準）':''}` : ""}</div>}
+    {result === "playing" && hud.contactFeedback && elapsed - hud.contactFeedback.at < 4 && <div className={"contact-feedback contact-feedback--" + hud.contactFeedback.classification} role="status" aria-live="polite">{hud.contactFeedback.message}</div>}
+    {result === "playing" && <div className={`radio-feedback radio-feedback--${radio?.phase ?? "idle"}`} role="status" aria-live="polite" aria-atomic="true">{radio && elapsed - radio.at < 8 ? `先前通訊 ${radio.at.toFixed(1)}s：${radio.message}${radio.command==='request-pit'?'（目前狀態以左上授權為準）':''}` : ""}</div>}
     {result !== "playing" && <div className="result-overlay"><div className={"result-card result-card--" + result}>
       <span>{resultCopy.eyebrow}</span><h2>{resultCopy.title}</h2><p>{result === "failed" && debrief.successfulContacts > 0 ? "有效 PIT 已記錄，但未在時限內完成失能或包圍控制。" : resultCopy.detail}</p>
       {result !== "paused" && <div className="debrief-grid">

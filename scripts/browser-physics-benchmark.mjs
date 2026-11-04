@@ -18,8 +18,8 @@ const browser=spawn(process.env.EDGE_PATH??'C:\\Program Files (x86)\\Microsoft\\
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 let socket,id=0;const pending=new Map(),errors=[];
 async function command(method,params={}) {
-  const key=++id;socket.send(JSON.stringify({id:key,method,params}));
-  return new Promise((resolve,reject)=>pending.set(key,{resolve,reject}));
+  const key=++id;
+  return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(key);reject(Error(`Timeout: ${method}`));},20000);pending.set(key,{resolve,reject,timer});socket.send(JSON.stringify({id:key,method,params}));});
 }
 async function evaluate(expression) {
   const r=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});
@@ -45,10 +45,11 @@ try {
   await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
   socket.addEventListener('message',e=>{
     const m=JSON.parse(e.data);
-    if(m.id){const r=pending.get(m.id);pending.delete(m.id);if(m.error)r?.reject(Error(m.error.message));else r?.resolve(m.result);}
+    if(m.id){const r=pending.get(m.id);if(r)clearTimeout(r.timer);pending.delete(m.id);if(m.error)r?.reject(Error(m.error.message));else r?.resolve(m.result);}
     if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.text);
     if(m.method==='Network.loadingFailed'&&!m.params.canceled)errors.push(m.params.errorText);
   });
+  socket.addEventListener('close',()=>{for(const r of pending.values()){clearTimeout(r.timer);r.reject(Error('Browser closed before verification'));}pending.clear();});
   await command('Runtime.enable');await command('Page.enable');await command('Network.enable');
   await command('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false});
   await command('Page.addScriptToEvaluateOnNewDocument',{source:`window.__pitRoots=new Set();window.__REACT_DEVTOOLS_GLOBAL_HOOK__={supportsFiber:true,inject:()=>1,onCommitFiberRoot:(_,r)=>window.__pitRoots.add(r),onCommitFiberUnmount:()=>{}};`});
@@ -58,7 +59,7 @@ try {
     await waitFor(`!!document.querySelector('.deploy-button')`);await delay(500);
     await evaluate(`(() => {
       const buttons=[...document.querySelectorAll('button')];
-      buttons.find(b=>b.textContent.includes('州際高速')).click();
+      buttons.find(b=>b.textContent.includes('州際高速'))?.click();
       buttons.find(b=>b.textContent==='白天').click();
       buttons.find(b=>b.textContent.includes('巡邏轎車')).click();
       [...document.querySelectorAll('.quality-field button')].find(b=>b.textContent===${JSON.stringify({low:'低',medium:'中',high:'高'}[quality])}).click();
@@ -89,6 +90,7 @@ try {
     })()`);
     if(installed.seed!==seed)throw Error('Fixed seed did not apply: '+JSON.stringify(installed));
     console.log('benchmark start',round+1,installed);
+    if(process.env.PIT_BENCH_PROFILE==='true'){await command('Profiler.enable');await command('Profiler.start');}
     const started=Date.now();
     while(Date.now()-started<seconds*1000) {
       await delay(1000);
@@ -97,6 +99,10 @@ try {
       if(Math.floor((Date.now()-started)/1000)%30===0)console.log('benchmark progress',round+1,status);
     }
     const data=await evaluate(`(() => {const b=window.__pitBenchmark;b.stop();return {solver:b.solver,fixed:b.fixed,frames:b.frames,resources:b.resources,elapsedStart:b.elapsedStart,elapsedEnd:b.runtime.elapsed,wallSeconds:(performance.now()-b.start)/1000};})()`);
+    if(process.env.PIT_BENCH_PROFILE==='true'){
+      const profile=await command('Profiler.stop');await mkdir('work/physics-benchmark',{recursive:true});
+      await writeFile(join('work/physics-benchmark',`${label}-${round+1}.cpuprofile`),JSON.stringify(profile.profile),{flag:'wx'});
+    }
     records.push({...data,...installed,round:round+1});
     console.log('benchmark result',round+1,{solver:aggregate(data.solver),fixed:aggregate(data.fixed),frames:aggregate(data.frames),elapsed:data.elapsedEnd-data.elapsedStart});
     await command('Input.dispatchKeyEvent',{type:'keyDown',key:'p'});await command('Input.dispatchKeyEvent',{type:'keyUp',key:'p'});await delay(200);
@@ -105,6 +111,6 @@ try {
   if(errors.length)throw Error('Browser errors: '+errors.join('; '));
   const result={label,url,recordedAt:new Date().toISOString(),seed,quality,viewport:[1280,800],scenario:'Three fresh fixed-seed missions; highway/day/clear/patrol; no player input; no state/timer/victory changes; startup excluded; stock AI and all four cars active.',limitations:'Edge headless --disable-gpu. rAF intervals are presented frame intervals, not isolated GPU render duration. Fixed-step includes before callbacks, solver and after callbacks; solver measures actual world.step only. Independent timer instrumentation adds small overhead equally to baseline/new runs.',totals:{solver:aggregate(records.flatMap(r=>r.solver)),fixed:aggregate(records.flatMap(r=>r.fixed)),frames:aggregate(records.flatMap(r=>r.frames)),wallSeconds:records.reduce((n,r)=>n+r.wallSeconds,0),simulationSeconds:records.reduce((n,r)=>n+r.elapsedEnd-r.elapsedStart,0)},records};
   await mkdir('work/physics-benchmark',{recursive:true});
-  const path=join('work/physics-benchmark',label.replace(/[^a-zA-Z0-9_-]/g,'_')+'.json');await writeFile(path,JSON.stringify(result,null,2));
+  const path=join('work/physics-benchmark',label.replace(/[^a-zA-Z0-9_-]/g,'_')+'.json');await writeFile(path,JSON.stringify(result,null,2),{flag:'wx'});
   console.log('benchmark saved',path,result.totals);
 } finally {if(socket?.readyState===WebSocket.OPEN)socket.close();browser.kill();}

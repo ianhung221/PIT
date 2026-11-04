@@ -1,4 +1,5 @@
 import type { CameraMode, MissionConfig, SceneId } from "../lib/gameConfig.ts";
+import type { RoadNetwork } from '../lib/roadNetwork.ts';
 
 export type MissionOutcome = "playing" | "contained" | "disabled" | "stopped-mobile" | "recovered" | "escaped-containment" | "unsafe-pit" | "failed" | "paused";
 export type PursuitRole = "primary" | "secondary" | "tertiary" | "containment-front" | "containment-rear" | "unavailable";
@@ -36,5 +37,5 @@ export interface RoadSegment {
   kind: "straight" | "curve" | "junction" | "transition";
 }
 
-export interface GeneratedRoad { seed: string; code: string; segments: RoadSegment[]; geometryVersion?: number }
+export interface GeneratedRoad { seed: string; code: string; segments: RoadSegment[]; geometryVersion?: number; network?:RoadNetwork }
 export interface V2MissionConfig extends MissionConfig { seed?: string; camera?: CameraMode }

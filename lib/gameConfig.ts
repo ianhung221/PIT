@@ -7,6 +7,8 @@ export type CameraMode = "chase" | "driver" | "auto";
 export type QualityId = "low" | "medium" | "high";
 
 export interface MissionConfig {
+  mapMode?: 'network';
+  navigation?: boolean;
   difficulty?: SuspectDifficulty;
   behaviorSeed?: string;
   scene: SceneId;

@@ -2,6 +2,7 @@ import { BIOME_ORDER, ROAD_MODULES } from "./roadModules.ts";
 import { createSeededRandom } from "./seededRandom.ts";
 import { SCENES, type SceneId } from "./gameConfig.ts";
 import type { GeneratedRoad, RoadSegment } from "../types/game.ts";
+import {networkIndex,nearbyNetworkEdges} from './roadNetwork.ts';
 
 function biomeSequence(start: SceneId, random: () => number): SceneId[] {
   const remaining = BIOME_ORDER.filter((scene) => scene !== start);
@@ -59,6 +60,19 @@ export function generateRoad(seed: string, start: SceneId, count = 72): Generate
 }
 
 export function closestRoadSegment(road: GeneratedRoad, x: number, z: number, hint = 0): number {
+  if(road.network){
+    const index=networkIndex(road.network);
+    let best=0,score=Infinity;
+    const evaluate=(edges:typeof road.network.edges)=>{for(const edge of edges){
+      const i=index.edgeNumbers.get(edge.id)!;
+      const s=road.segments[i],along=Math.max(-s.length/2,Math.min(s.length/2,-(x-s.x)*Math.sin(s.yaw)-(z-s.z)*Math.cos(s.yaw)));
+      const d=Math.hypot(x-s.x+Math.sin(s.yaw)*along,z-s.z+Math.cos(s.yaw)*along)-(i===hint?.5:0);
+      if(d<score){score=d;best=i;}
+    }};
+    evaluate(nearbyNetworkEdges(road.network,x,z));
+    if(score>=30){score=Infinity;evaluate(road.network.edges);}
+    return best;
+  }
   let best = Math.max(0, Math.min(road.segments.length - 1, hint));
   let distance = Number.POSITIVE_INFINITY;
   const from = Math.max(0, best - 3);

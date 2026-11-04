@@ -2,6 +2,8 @@ import type { CarSnapshot, GeneratedRoad, RadioFeedback } from "../types/game.ts
 import { SUSPECT, VEHICLES } from "./gameConfig.ts";
 import { normalizeAngle } from "./gameRules.ts";
 import { closestRoadSegment } from "./proceduralMap.ts";
+import {networkGeometry} from './networkGeometry.ts';
+import {locateRoad,locationSegment} from './roadLocation.ts';
 
 type Point = { x: number; z: number };
 export interface BlockadeState {
@@ -41,6 +43,13 @@ export function containmentPose(unit: 0 | 1, car: CarSnapshot, suspect: CarSnaps
     && Math.abs(normalizeAngle(roadYaw - car.yaw)) < .25 && planar(car) < .65 && planar(suspect) < 1.2;
 }
 function inRoad(road: GeneratedRoad, point: Point, yaw: number, index: number, unit: number) {
+  if(road.network){
+    const dimensions=unit===0?VEHICLES.patrol:VEHICLES.suv,g=networkGeometry(road.network);
+    const corners=[-1,1].flatMap(side=>[-1,1].map(forward=>pointAt({...point,yaw},side*(dimensions.width/2+.35),forward*(dimensions.length/2+.35))));
+    if(!corners.every(p=>g.surfaces.some(({section:s})=>{const poly=[s.startLeft,s.endLeft,s.endRight,s.startRight];return poly.every((a,i)=>{const b=poly[(i+1)%4];return (b.x-a.x)*(p.z-a.z)-(b.z-a.z)*(p.x-a.x)>=-1e-7;});})))return false;
+    const minX=Math.min(...corners.map(p=>p.x)),maxX=Math.max(...corners.map(p=>p.x)),minZ=Math.min(...corners.map(p=>p.z)),maxZ=Math.max(...corners.map(p=>p.z));
+    return ![...g.walls,...road.network.objects].some(o=>o.x+o.halfX>minX&&o.x-o.halfX<maxX&&o.z+o.halfZ>minZ&&o.z-o.halfZ<maxZ);
+  }
   const i = closestRoadSegment(road, point.x, point.z, index), segment = road.segments[i];
   const dimensions = unit === 0 ? VEHICLES.patrol : VEHICLES.suv;
   const half = extent(yaw - segment.yaw, dimensions.length, dimensions.width).side;
@@ -50,7 +59,7 @@ function inRoad(road: GeneratedRoad, point: Point, yaw: number, index: number, u
 
 /** Select once per attempt. A rotating suspect cannot flip the chosen passing side. */
 export function planBlockade(road: GeneratedRoad, index: number, suspect: CarSnapshot, supports: CarSnapshot[], player: CarSnapshot) {
-  const yaw = road.segments[index].yaw;
+  const yaw = road.network?locationSegment(road.network,locateRoad(road.network,suspect)).yaw:road.segments[index].yaw;
   const targetExtent = extent(suspect.yaw - yaw, SUSPECT.length, SUSPECT.width);
   const origin = { x: suspect.x, z: suspect.z, yaw, index };
   const front = targetExtent.forward + VEHICLES.patrol.length / 2 + .8;

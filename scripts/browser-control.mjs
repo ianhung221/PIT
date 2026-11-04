@@ -4,14 +4,17 @@
 // dynamic Rapier body. Never inject PIT qualification, timers or victory.
 export async function stageControlParking(evaluate, sealed=true) {
   await evaluate(`(() => {
-    const {runtime:r,bodies:available}=window.__pitInspect(),seg=r.road.segments[1];
+    const {runtime:r,bodies:available}=window.__pitInspect();
+    // The network has open road shoulders; use its real west boundary for the
+    // fourth side of this parked cage, never an invented road-edge wall.
+    const seg=r.road.network?{x:r.road.network.bounds.minX+6.5,z:r.road.network.bounds.minZ+60,width:12,yaw:0}:r.road.segments[1];
     const remaining=[...available];
     const bodies=[r.player,r.suspect,...r.supports].map(c=>{remaining.sort((a,b)=>Math.hypot(a.translation().x-c.x,a.translation().z-c.z)-Math.hypot(b.translation().x-c.x,b.translation().z-c.z));return remaining.shift();});
     const edge=-seg.width/2;
     const positions=[[edge+2.55,-3.65,-Math.PI/2],[edge+1.35,-.25,0],[edge+2.55,3.65,-Math.PI/2],[edge+3.7,${sealed?0:12},0]];
     positions.forEach(([side,z,offset],i)=>{
       const yaw=seg.yaw+offset,x=seg.x+Math.cos(seg.yaw)*side+Math.sin(seg.yaw)*z,worldZ=seg.z-Math.sin(seg.yaw)*side+Math.cos(seg.yaw)*z;
-      const body=bodies[i];body.setTranslation({x,y:-.325,z:worldZ},true);body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
+      const body=bodies[i];body.setTranslation({x,y:r.road.network?-.42:-.325,z:worldZ},true);body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
       body.setLinvel({x:0,y:0,z:0},true);body.setAngvel({x:0,y:0,z:0},true);
       if(i!==1) {
         body.lockTranslations(true,true);body.lockRotations(true,true);

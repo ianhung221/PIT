@@ -22,6 +22,10 @@ import { makeDiagnostics, type PitDiagnostics } from "@/lib/pitDiagnostics";
 import { makeContactEpisodes } from '@/lib/pitContactEpisode';
 import { makeSuspectDecision, type SuspectDecision } from '@/lib/suspectDriving';
 import { makeDamageEpisodes, type DamageEpisodes } from '@/lib/vehicleCollisionDamage';
+import {generateNetwork} from '@/lib/networkGenerator';
+import {networkIndex} from '@/lib/roadNetwork';
+import {locationSegment,locateRoad} from '@/lib/roadLocation';
+import {makeNetworkDriver,type NetworkDriver} from '@/lib/networkPursuit';
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -41,6 +45,7 @@ export interface SupportUnitSnapshot extends CarSnapshot {
 }
 
 export interface V2Runtime {
+  networkDrivers:[NetworkDriver,NetworkDriver,NetworkDriver];
   damageEpisodes: DamageEpisodes;
   supportDamage: [VehicleDamage,VehicleDamage];
   decision: SuspectDecision;
@@ -93,19 +98,28 @@ const snapshot = (x: number, z: number, speed = 0): CarSnapshot => ({ x, z, yaw:
 export function makeV2Runtime(config: MissionConfig): V2Runtime {
   const seed = config.seed?.trim() || "PIT-TRAINING";
   const initialSpeed = SCENES[config.scene].aiSpeed * .72;
+  const network=config.mapMode==='network'?generateNetwork(seed):undefined;
+  const road:GeneratedRoad=network?{network,seed:network.seed,code:network.code,segments:network.edges.map(e=>locationSegment(network,{edge:e.id,from:e.a,to:e.b,distance:0,offset:0,deviation:0,nearJunction:false}))}:generateRoad(seed,config.scene);
+  const start=(distance:number,speed:number):CarSnapshot=>{
+    if(!network)return snapshot(0,0,speed);
+    const index=networkIndex(network),edge=index.edges.get(network.spawn.edge)!,a=index.nodes.get(network.spawn.from)!,b=index.nodes.get(edge.a===a.id?edge.b:edge.a)!;
+    const dx=(b.x-a.x)/edge.length,dz=(b.z-a.z)/edge.length;
+    return {x:a.x+dx*distance-dz*2.7,z:a.z+dz*distance+dx*2.7,yaw:Math.atan2(-dx,-dz),speed,lateralSpeed:0};
+  };
   return {
+    networkDrivers:[makeNetworkDriver(`${seed}-suspect`),makeNetworkDriver(`${seed}-02`),makeNetworkDriver(`${seed}-03`)],
     damageEpisodes:makeDamageEpisodes(),supportDamage:[pristineDamage(),pristineDamage()],
     decision: makeSuspectDecision(config.behaviorSeed ?? seed),
     contactEpisodes: makeContactEpisodes(),
     diagnostics: makeDiagnostics('mission', JSON.stringify(config)),
     driving: makePlayerDriving(),
-    player: snapshot(0, 8),
-    suspect: snapshot(.8, -24, initialSpeed),
+    player: network?start(80,0):snapshot(0, 8),
+    suspect: network?start(112,16):snapshot(.8, -24, initialSpeed),
     supports: [
-      { ...snapshot(-2.1, 18, Math.min(8, initialSpeed)), role: "secondary", model: "patrol" },
-      { ...snapshot(2.1, 29, Math.min(8, initialSpeed)), role: "tertiary", model: "suv" },
+      { ...(network?start(65,0):snapshot(-2.1, 18, Math.min(8, initialSpeed))), role: "secondary", model: "patrol" },
+      { ...(network?start(50,0):snapshot(2.1, 29, Math.min(8, initialSpeed))), role: "tertiary", model: "suv" },
     ],
-    road: generateRoad(seed, config.scene),
+    road,
     playerRoadIndex: 0,
     suspectRoadIndex: 0,
     supportRoadIndices: [0, 0],
@@ -152,7 +166,7 @@ export function logRuntimeEvent(runtime: V2Runtime, message: string) {
 
 export function refreshPitAuthorization(runtime: V2Runtime, config: MissionConfig, suspect = runtime.suspect, force = false) {
   if (!runtime.authorizationRequested || (!force && runtime.elapsed - runtime.authorizationCheckedAt < .25)) return;
-  const segment = runtime.road.segments[runtime.suspectRoadIndex];
+  const segment = runtime.road.network?locationSegment(runtime.road.network,locateRoad(runtime.road.network,suspect,runtime.networkDrivers[0].location)):runtime.road.segments[runtime.suspectRoadIndex];
   const supportUnits = runtime.supports.filter((c,i) => !c.pose?.rolloverDisabled&&vehicleCanPerformDriving(runtime.supportDamage[i])&&Math.hypot(c.x - suspect.x, c.z - suspect.z) < 150).length;
   const decision = evaluatePitRisk(missionPitRisk(config, segment, suspect, supportUnits));
   const reason = decision.reasons.join("、");

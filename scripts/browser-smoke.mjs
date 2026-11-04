@@ -13,6 +13,8 @@ import { verifyPracticeRepair } from './browser-practice-repair.mjs';
 import { verifyVehicleIntegration } from './browser-vehicle-integration.mjs';
 import { verifyVehicleRollover } from './browser-vehicle-rollover.mjs';
 import { verifyVehiclePit } from './browser-vehicle-pit.mjs';
+import { verifyNetworkControls } from './browser-network-controls.mjs';
+import { verifyNetworkLifecycle } from './browser-network-lifecycle.mjs';
 import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
@@ -21,6 +23,8 @@ const practiceCheck = process.env.PIT_TEST_PRACTICE === 'true';
 const weather = process.env.PIT_TEST_WEATHER ?? "rain";
 const scene = process.env.PIT_TEST_SCENE ?? "highway";
 const quality = process.env.PIT_TEST_QUALITY ?? "high";
+const artifactDirectory=`work/browser-smoke-${Date.now()}`;
+let captureIndex=0;
 const edge = process.env.EDGE_PATH
   ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -67,6 +71,7 @@ socket.addEventListener("message", (event) => {
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
+    clearTimeout(request.timer);
     if (message.error) request.reject(new Error(`${request.method}: ${message.error.message}`));
     else request.resolve(message.result);
   } else if (message.method === "Runtime.exceptionThrown") {
@@ -78,8 +83,7 @@ socket.addEventListener("message", (event) => {
 
 function command(method, params = {}) {
   const id = ++nextId;
-  socket.send(JSON.stringify({ id, method, params }));
-  return new Promise((resolve, reject) => pending.set(id, { resolve, reject, method }));
+  return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error(`Timeout: ${method}`));},20000);pending.set(id,{resolve,reject,method,timer});socket.send(JSON.stringify({id,method,params}));});
 }
 
 async function evaluate(expression) {
@@ -94,9 +98,11 @@ async function evaluate(expression) {
 
 async function capture(name) {
   const result = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  await mkdir("work/browser-smoke", { recursive: true });
+  await mkdir(artifactDirectory, { recursive: true });
   const prefix = worldCheck ? `${scene}-${weather}-${quality}-` : "";
-  await writeFile(`work/browser-smoke/${prefix}${name}.png`, Buffer.from(result.data, "base64"));
+  const path=`${artifactDirectory}/${++captureIndex}-${prefix}${name}.png`;
+  await writeFile(path, Buffer.from(result.data, "base64"),{flag:'wx'});
+  console.log('capture',path);
 }
 
 async function waitFor(expression, description) {
@@ -119,6 +125,7 @@ try {
   console.log("browser: protocols enabled");
   await waitFor('Boolean(document.querySelector(".deploy-button"))', "briefing");
   await delay(1000);
+  if(new URL(url).searchParams.get('setup')==='1')await waitFor('document.body.innerText.includes("多城鎮路網")','network-setup');
   const briefing = await evaluate(`({
     title: document.title,
     deploy: Boolean(document.querySelector(".deploy-button")),
@@ -130,9 +137,9 @@ try {
 
   if (worldCheck) await evaluate(`(() => {
     const sceneLabels = { city: "城市街區", country: "鄉間公路", highway: "州際高速" };
-    [...document.querySelectorAll("button")].find(b => b.textContent.includes(sceneLabels[${JSON.stringify(scene)}])).click();
+    [...document.querySelectorAll("button")].find(b => b.textContent.includes(sceneLabels[${JSON.stringify(scene)}]))?.click();
     [...document.querySelectorAll("button")].find(b => b.textContent === "白天").click();
-    if (${JSON.stringify(process.env.PIT_TEST_VEHICLE ?? "")} === "suv") [...document.querySelectorAll("button")].find(b => b.textContent.includes("警用 SUV")).click();
+    if (${JSON.stringify(process.env.PIT_TEST_VEHICLE ?? "")} === "interceptor") [...document.querySelectorAll("button")].find(b => b.textContent.includes("攔截跑車")).click();
     if (${JSON.stringify(process.env.PIT_TEST_VEHICLE ?? "")} === "suv") [...document.querySelectorAll("button")].find(b => b.textContent.includes("警用 SUV")).click();
     const q = { low: "低", medium: "中", high: "高" };
     [...document.querySelectorAll(".quality-field button")].find(b => b.textContent === q[${JSON.stringify(quality)}]).click();
@@ -201,7 +208,13 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if (process.env.PIT_TEST_MISSION_SETTINGS === 'true') {
+  if(process.env.PIT_TEST_NETWORK_LIFECYCLE==='true'){
+    await verifyNetworkLifecycle({evaluate,delay,capture,waitFor});
+    if(runtimeErrors.length||failedRequests.length)throw Error(JSON.stringify({runtimeErrors,failedRequests}));
+  } else if(process.env.PIT_TEST_NETWORK_CONTROLS==='true'){
+    await verifyNetworkControls({evaluate,command,delay,capture});
+    if(runtimeErrors.length||failedRequests.length)throw Error(JSON.stringify({runtimeErrors,failedRequests}));
+  } else if (process.env.PIT_TEST_MISSION_SETTINGS === 'true') {
     await waitFor('window.__pitInspect().runtime.elapsed>5','mission-driving');
     const state=await evaluate(`(() => {const r=window.__pitInspect().runtime;return {config:r.diagnostics.config,elapsed:r.elapsed,decision:r.decision,roadIndex:r.suspectRoadIndex,result:r.result};})()`);
     const settings=JSON.parse(state.config);
