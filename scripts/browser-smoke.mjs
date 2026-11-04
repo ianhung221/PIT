@@ -15,6 +15,7 @@ import { verifyVehicleRollover } from './browser-vehicle-rollover.mjs';
 import { verifyVehiclePit } from './browser-vehicle-pit.mjs';
 import { verifyNetworkControls } from './browser-network-controls.mjs';
 import { verifyNetworkLifecycle } from './browser-network-lifecycle.mjs';
+import { verifyHudLayout } from './browser-hud-layout.mjs';
 import { CAMERA_SETTINGS } from "../lib/gameConfig.ts";
 
 const url = process.env.PIT_TEST_URL ?? "http://127.0.0.1:4174/PIT/";
@@ -208,7 +209,9 @@ try {
     console.log("world: inspection", await evaluate(`(() => { const s = window.__pitInspect(); return { runtime: !!s.runtime, world: !!s.world, particles: !!s.particles, mirrors: !!s.mirrors, bodies: s.bodies.length, roads: s.world?.children.length }; })()`));
   }
 
-  if(process.env.PIT_TEST_NETWORK_LIFECYCLE==='true'){
+  if(process.env.PIT_TEST_HUD_LAYOUT==='true'){
+    await verifyHudLayout({evaluate,command,delay,capture});
+  } else if(process.env.PIT_TEST_NETWORK_LIFECYCLE==='true'){
     await verifyNetworkLifecycle({evaluate,delay,capture,waitFor});
     if(runtimeErrors.length||failedRequests.length)throw Error(JSON.stringify({runtimeErrors,failedRequests}));
   } else if(process.env.PIT_TEST_NETWORK_CONTROLS==='true'){

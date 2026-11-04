@@ -290,7 +290,6 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       />
     </Canvas>
     <div className="game-vignette" />
-    {initialRuntime.road.network&&<Minimap key={runId} network={initialRuntime.road.network} runtime={runtime} enabled={config.navigation!==false}/>}
     <header className="game-top">
       <div className="game-logo"><b>PIT</b> UNIT V2</div>
       <div className="objective"><small>TRAINING OBJECTIVE</small><strong>取得授權、執行有效 PIT、完成包圍</strong></div>
@@ -308,12 +307,16 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       </div>}
     </section>
     <section className="hud-timer"><small>{config.mapMode==='network'?'經過時間':'TIME REMAINING'}</small><strong>{Math.floor(time / 60).toString().padStart(2, "0")}:{Math.floor(time % 60).toString().padStart(2, "0")}</strong></section>
+    <div className={initialRuntime.road.network ? "hud-right hud-right--network" : "hud-right"}>
     <section className="hud-target">
       <small>TARGET / {hud.biome.toUpperCase()}</small><strong>{hud.distance.toFixed(1)} M</strong>
+      <PlayerStatus driving={hud.driving} details={diagnosticDetails}/>
       <PitDiagnosticPanel data={diagnostics} details={diagnosticDetails}/>
       <label className="diagnostic-toggles"><input type="checkbox" checked={diagnosticDetails} onChange={e=>setDiagnosticDetails(e.target.checked)}/> 詳細量測</label>
-      <PlayerStatus driving={hud.driving} details={diagnosticDetails}/>
     </section>
+    {initialRuntime.road.network&&<Minimap key={runId} network={initialRuntime.road.network} runtime={runtime} enabled={config.navigation!==false}/>}
+    <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>
+    </div>
     <section className={"hud-policy " + policyClass}>
       <small>PIT AUTHORIZATION · 目前</small><strong>{authorization.toUpperCase()}</strong><span>{authorization!==policy.authorization?'授權已過期，等待重新評估':policy.reason}</span>
       {hud.authorizationExpires > 0 && <span>持續評估中 · 接觸時再次核對</span>}
@@ -331,7 +334,6 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       {hud.missionStage === "escaped-containment" && <span>嫌犯再次逃逸 · 保持追蹤</span>}
       <span className="control-reason">攔停：{hud.control.reason}{hud.heldFor > 0 ? `（${Math.min(100, Math.round(hud.heldFor / CONTROL.hold * 100))}%）` : ""}</span>
     </section>
-    <section className="hud-camera"><small>CAMERA</small><strong>{CAMERA_LABELS[cameraMode]}</strong><span>C 切換 · R 快速後看</span></section>
     {cameraMode === "auto" && hud.distance > CAMERA_SETTINGS.helicopterFocusDistance && <div
       className="target-direction"
       style={{ "--target-bearing": `${hud.targetBearing}rad` } as React.CSSProperties}

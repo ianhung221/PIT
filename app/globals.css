@@ -106,3 +106,19 @@ fieldset{border:0;padding:0;margin:0 0 18px}legend{font-size:12px;color:#c3cbce;
 @media(max-width:650px),(max-height:650px){.network-minimap{width:145px;right:12px;bottom:116px}.navigation-turn{padding:4px 8px;gap:8px}.navigation-turn b{font-size:27px}.navigation-turn span{font-size:14px}}
 @media(max-height:520px) and (min-width:651px){.game-shell:has(.network-minimap) .hud-units{display:none}.game-shell:has(.network-minimap) .hud-target{top:85px;width:160px}.game-shell:has(.network-minimap) .hud-target>.pit-diagnostic,.game-shell:has(.network-minimap) .hud-target>.diagnostic-toggles,.game-shell:has(.network-minimap) .hud-target>.player-status{display:none}.network-minimap{bottom:64px;width:130px}.network-minimap svg{height:100px}.game-shell:has(.network-minimap) .hud-camera{bottom:12px}.game-shell:has(.network-minimap) .hud-camera small,.game-shell:has(.network-minimap) .hud-camera span{display:none}.game-shell:has(.network-minimap) .hud-policy{top:88px;width:245px}.game-shell:has(.network-minimap) .radio-trigger{bottom:150px}.game-shell:has(.network-minimap) .hud-speed{bottom:24px}}
 @media(max-width:650px){.game-shell:has(.network-minimap) .hud-timer{left:auto;right:62px;transform:none;top:30px}.game-shell:has(.network-minimap) .hud-target{width:165px}.game-shell:has(.network-minimap) .hud-policy{width:46vw}.network-minimap{width:130px}}
+
+/* Network HUD shares one height budget: status, map and camera never overlap. */
+.hud-right--network{position:absolute;right:28px;top:106px;bottom:38px;width:210px;display:flex;flex-direction:column;align-items:stretch;gap:6px;z-index:4;pointer-events:none}
+.hud-right--network .hud-target,.hud-right--network .hud-camera,.hud-right--network .network-minimap{position:static;width:100%;pointer-events:auto}
+.hud-right--network .hud-target{flex:0 0 auto;display:flex;flex-direction:column}
+.hud-right--network .hud-target>strong{margin:4px 0 2px}
+.hud-right--network .player-status{flex:none;margin:0 0 4px}
+.hud-right--network .player-input-details{max-height:clamp(28px,8vh,90px)}
+.hud-right--network .hud-target>.pit-diagnostic{max-height:clamp(46px,15vh,165px);overflow:auto;overscroll-behavior:contain}
+.hud-right--network .diagnostic-toggles{flex:none;margin-top:4px}
+.hud-right--network .network-minimap{flex:0 1 auto;min-height:0;display:flex;flex-direction:column}
+.hud-right--network .network-minimap>button,.hud-right--network .navigation-turn{flex:none}
+.hud-right--network .network-minimap svg{flex:0 1 auto;min-height:0;object-fit:contain}
+.hud-right--network .hud-camera{flex:none}
+@media(max-width:650px),(max-height:650px){.hud-right--network{right:12px;top:88px;bottom:38px;width:145px}.game-shell:has(.network-minimap) .hud-right--network .hud-target{width:100%}}
+@media(max-height:520px){.hud-right--network{top:75px;bottom:10px;width:130px;gap:3px}.hud-right--network .hud-target>strong{font-size:19px;margin:0}.hud-right--network .player-status{font-size:10px;padding:4px;margin-bottom:2px}.hud-right--network .hud-target>.pit-diagnostic{max-height:46px;padding:4px}.hud-right--network .player-input-details{max-height:28px}.hud-right--network .diagnostic-toggles{margin-top:2px}.hud-right--network .network-minimap svg{height:auto}.game-shell:has(.network-minimap) .hud-right--network .hud-target>.pit-diagnostic,.game-shell:has(.network-minimap) .hud-right--network .hud-target>.diagnostic-toggles,.game-shell:has(.network-minimap) .hud-right--network .hud-target>.player-status{display:block}.game-shell:has(.network-minimap) .hud-right--network .hud-target>.diagnostic-toggles{display:flex}.hud-right--network .hud-camera strong{font-size:13px;margin:0}}
