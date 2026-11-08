@@ -28,7 +28,7 @@ export async function verifySupportUnits({ evaluate, command, delay, capture, wa
       Object.assign(snapshot,{x,z,yaw,speed,lateralSpeed:0});
     };
     s.elapsed=0; s.pitQualified=false; s.pitCandidate=null; s.containmentElapsed=0; if(!preserveCommand) s.tacticalCommand=null; s.radioFeedback=null;
-    s.blockade={phase:'waiting',elapsed:0,slowFor:0,fastFor:0,reason:'',anchor:null,stages:[0,0],settled:[0,0],blockedFor:[0,0]};
+    s.blockade={phase:'waiting',elapsed:0,slowFor:0,fastFor:0,reason:'',anchor:null,stages:[0,0],settled:[0,0],blockedFor:[0,0],frontUnit:0,available:[true,true],playerCovered:[false,false]};
     s.commandAt=0;
     if(kind==='walls') {
       place(bodies[0],s.player,3,0,0); place(bodies[1],s.suspect,4,0,0,0,25);

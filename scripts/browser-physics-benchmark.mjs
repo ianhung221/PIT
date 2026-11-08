@@ -16,7 +16,7 @@ const browser=spawn(process.env.EDGE_PATH??'C:\\Program Files (x86)\\Microsoft\\
   `--user-data-dir=${join(tmpdir(),'pit-physics-benchmark-'+Date.now())}`,url,
 ],{stdio:'ignore'});
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-let socket,id=0;const pending=new Map(),errors=[];
+let socket,id=0;const pending=new Map(),errors=[],records=[];
 async function command(method,params={}) {
   const key=++id;
   return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(key);reject(Error(`Timeout: ${method}`));},20000);pending.set(key,{resolve,reject,timer});socket.send(JSON.stringify({id:key,method,params}));});
@@ -54,7 +54,6 @@ try {
   await command('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false});
   await command('Page.addScriptToEvaluateOnNewDocument',{source:`window.__pitRoots=new Set();window.__REACT_DEVTOOLS_GLOBAL_HOOK__={supportsFiber:true,inject:()=>1,onCommitFiberRoot:(_,r)=>window.__pitRoots.add(r),onCommitFiberUnmount:()=>{}};`});
   await command('Page.reload',{ignoreCache:true});
-  const records=[];
   for(let round=0;round<runs;round++) {
     await waitFor(`!!document.querySelector('.deploy-button')`);await delay(500);
     await evaluate(`(() => {
@@ -94,7 +93,7 @@ try {
     const started=Date.now();
     while(Date.now()-started<seconds*1000) {
       await delay(1000);
-      const status=await evaluate(`(() => {const b=window.__pitBenchmark,r=b.runtime,w=b.world;const x={at:(performance.now()-b.start)/1000,elapsed:r.elapsed,result:r.result,bodies:w.bodies.len(),colliders:w.colliders.len(),controllers:w.vehicleControllers.size};b.resources.push(x);return x;})()`);
+      const status=await evaluate(`(() => {const b=window.__pitBenchmark,r=b.runtime,w=b.world;const x={at:(performance.now()-b.start)/1000,elapsed:r.elapsed,result:r.result,bodies:w.bodies.len(),colliders:w.colliders.len(),controllers:w.vehicleControllers.size};if(${process.env.PIT_BENCH_TRACE==='true'})x.driving={player:{...r.player},suspect:{...r.suspect},supports:r.supports.map(car=>({...car})),formation:{...r.networkSupport},damage:r.supportDamage.map(d=>({...d})),drivers:r.networkDrivers.map(d=>({blocked:d.blocked,mode:d.local?.mode,reason:d.local?.reason}))};b.resources.push(x);return x;})()`);
       if(status.result!=='playing')throw Error('Mission ended during timed sample: '+JSON.stringify(status));
       if(Math.floor((Date.now()-started)/1000)%30===0)console.log('benchmark progress',round+1,status);
     }
@@ -109,8 +108,13 @@ try {
     await evaluate(`([...document.querySelectorAll('.debrief-actions button')].find(b=>b.textContent==='返回設定')).click()`);await delay(300);
   }
   if(errors.length)throw Error('Browser errors: '+errors.join('; '));
-  const result={label,url,recordedAt:new Date().toISOString(),seed,quality,viewport:[1280,800],scenario:'Three fresh fixed-seed missions; highway/day/clear/patrol; no player input; no state/timer/victory changes; startup excluded; stock AI and all four cars active.',limitations:'Edge headless --disable-gpu. rAF intervals are presented frame intervals, not isolated GPU render duration. Fixed-step includes before callbacks, solver and after callbacks; solver measures actual world.step only. Independent timer instrumentation adds small overhead equally to baseline/new runs.',totals:{solver:aggregate(records.flatMap(r=>r.solver)),fixed:aggregate(records.flatMap(r=>r.fixed)),frames:aggregate(records.flatMap(r=>r.frames)),wallSeconds:records.reduce((n,r)=>n+r.wallSeconds,0),simulationSeconds:records.reduce((n,r)=>n+r.elapsedEnd-r.elapsedStart,0)},records};
+  const result={label,url,recordedAt:new Date().toISOString(),seed,quality,viewport:[1280,800],scenario:`${runs} fresh fixed-seed mission(s), ${seconds} seconds each; highway/day/clear/patrol; no player input; no state/timer/victory changes; startup excluded; stock AI and all four cars active.`,limitations:'Edge headless --disable-gpu. rAF intervals are presented frame intervals, not isolated GPU render duration. Fixed-step includes before callbacks, solver and after callbacks; solver measures actual world.step only. Independent timer instrumentation adds small overhead equally to baseline/new runs.',totals:{solver:aggregate(records.flatMap(r=>r.solver)),fixed:aggregate(records.flatMap(r=>r.fixed)),frames:aggregate(records.flatMap(r=>r.frames)),wallSeconds:records.reduce((n,r)=>n+r.wallSeconds,0),simulationSeconds:records.reduce((n,r)=>n+r.elapsedEnd-r.elapsedStart,0)},records};
   await mkdir('work/physics-benchmark',{recursive:true});
   const path=join('work/physics-benchmark',label.replace(/[^a-zA-Z0-9_-]/g,'_')+'.json');await writeFile(path,JSON.stringify(result,null,2),{flag:'wx'});
   console.log('benchmark saved',path,result.totals);
+} catch(error) {
+  await mkdir('work/physics-benchmark',{recursive:true});
+  let page=null;try{page=await evaluate('({url:location.href,text:document.body.innerText.slice(0,5000)})');}catch{/* Keep the original timeout even when DevTools is unresponsive. */}
+  await writeFile(join('work/physics-benchmark',`${label}-failure-${Date.now()}.json`),JSON.stringify({error:String(error),errors,page,completedRounds:records},null,2),{flag:'wx'});
+  throw error;
 } finally {if(socket?.readyState===WebSocket.OPEN)socket.close();browser.kill();}

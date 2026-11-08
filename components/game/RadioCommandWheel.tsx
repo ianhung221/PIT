@@ -7,7 +7,7 @@ const COMMANDS: { id: RadioCommand; label: string; key: string }[] = [
   { id: "request-pit", label: "請求 PIT 授權", key: "1" },
   { id: "prepare-pit", label: "準備執行 PIT", key: "2" },
   { id: "move-up", label: "第二單位靠近", key: "3" },
-  { id: "block-front", label: "封鎖嫌犯車頭", key: "4" },
+  { id: "block-front", label: "協助封鎖嫌犯", key: "4" },
   { id: "take-primary", label: "接替主追單位", key: "5" },
   { id: "terminate", label: "終止追逐", key: "6" },
 ];

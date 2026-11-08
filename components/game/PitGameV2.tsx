@@ -16,6 +16,7 @@ import { VehicleMirrors } from "@/components/game/VehicleMirrors";
 import { logRuntimeEvent, makeV2Runtime, updateRadioFeedback, refreshPitAuthorization, type V2Result, type V2Runtime } from "@/components/game/v2Runtime";
 import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEATHER, type CameraMode, type MissionConfig } from "@/lib/gameConfig";
 import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } from "@/lib/pursuitCoordinator";
+import {cancelPursuitAttempt} from '@/lib/pursuitEvents';
 import { vehicleDriveability } from "@/lib/vehicleDamage";
 import { makeBlockade } from "@/lib/supportContainment";
 import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
@@ -171,7 +172,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     if (state.result !== "playing") return;
     state.command = command;
     state.tacticalCommand = nextTacticalCommand(state.tacticalCommand, command);
-    if (command !== "request-pit") { state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; state.blockade = makeBlockade(); }
+    if (command !== "request-pit") { state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; state.blockade = makeBlockade(); cancelPursuitAttempt(state.pursuitEvents,state.successfulContacts,state.commandAt); }
     updateRadioFeedback(state, { command, phase: "received", message: `${COMMAND_LABELS[command]}・已接收` });
     setRadio(state.radioFeedback);
     if (command === "request-pit") {

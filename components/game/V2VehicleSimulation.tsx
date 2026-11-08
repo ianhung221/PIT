@@ -42,7 +42,7 @@ import { stepSuspectDecision } from "@/lib/suspectDriving";
 import { coordinatePursuit, tacticalFeedback, COMMAND_LABELS, RADIO_PHASE_LABELS, type PursuitAssignments } from "@/lib/pursuitCoordinator";
 import { stepSupportAI, supportSlot } from "@/lib/supportUnitAI";
 import { driveSupport } from "@/lib/supportDriving";
-import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade } from "@/lib/supportContainment";
+import { stepBlockade, blockadeControl, blockadeFeedback, missBlockade,makeBlockade,waitForBlockadeRetry } from "@/lib/supportContainment";
 import { roadSections } from "@/lib/roadGeometry";
 import { assessVehicleControl, advanceControlTimers, controlRoadGeometry, isDisabledVehicleSettled, CONTROL, type ControlAssessment } from "@/lib/vehicleControlAssessment";
 import { vehicleCanContinue, vehicleCanPerformDriving, vehicleDriveability, vehicleFaultSummary } from "@/lib/vehicleDamage";
@@ -50,8 +50,11 @@ import { sampleCollisionDamage } from "@/lib/vehicleCollisionDamage";
 import type { MissionOutcome, RadioFeedback, RadioCommand } from "@/types/game";
 import type { PitAuthorization } from "@/types/game";
 import {escapeRoute,chaseRoute} from '@/lib/networkPursuit';
-import {locationSegment} from '@/lib/roadLocation';
+import {locateRoad,locationSegment} from '@/lib/roadLocation';
 import {networkControlGeometry} from '@/lib/networkGeometry';
+import {stepNetworkSupport} from '@/lib/networkSupport';
+import {stepPursuitEvents} from '@/lib/pursuitEvents';
+import {stepSuspectRecovery} from '@/lib/suspectRecovery';
 
 type BodyFrame=VehicleFrame;
 function bodySnapshot(body:RapierRigidBody){
@@ -231,9 +234,15 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
 
     const suspectPosition = suspect.translation();
     const suspectFrame = preImpact.current.suspect;
+    const suspectSnapshot=bodySnapshot(suspect);
+    // Both support bodies are unchanged until their own controllers run below.
+    // Reuse these observations for suspect awareness and formation planning.
+    const supportSnapshots=[bodySnapshot(support2),bodySnapshot(support3)] as const;
+    const recoveringFromPit=stepSuspectRecovery(state.suspectRecovery,state.successfulContacts,suspectSnapshot,config.difficulty??'normal',dt);
     state.suspectRoadIndex = closestRoadSegment(state.road, suspectPosition.x, suspectPosition.z, state.suspectRoadIndex);
     const network=state.road.network;
-    const networkControl=network?escapeRoute(network,state.networkDrivers[0],bodySnapshot(suspect),state.elapsed,grip,state.decision.offset):null;
+    const networkControl=network?escapeRoute(network,state.networkDrivers[0],suspectSnapshot,state.elapsed,grip,0,
+      state.pitCandidate||recoveringFromPit?undefined:[{...bodySnapshot(player),model:config.vehicle},{...supportSnapshots[0],model:'patrol'},{...supportSnapshots[1],model:'suv'}],config.difficulty??'normal',state.decision.duration>0?state.decision.offset:undefined):null;
     const segment = network?locationSegment(network,state.networkDrivers[0].location!):state.road.segments[state.suspectRoadIndex];
     refreshPitAuthorization(state, config, { ...state.suspect, speed:suspectFrame.forwardSpeed, lateralSpeed:suspectFrame.lateralSpeed });
     const targetSegment = network?segment:roadTarget(state.road, state.suspectRoadIndex, 2);
@@ -242,8 +251,10 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const segmentRightZ = -Math.sin(segment.yaw);
     const localRoadX = (suspectPosition.x - segment.x) * segmentRightX + (suspectPosition.z - segment.z) * segmentRightZ;
     const distanceToPlayer = Math.hypot(suspectPosition.x - playerFrame.x, suspectPosition.z - playerFrame.z);
-    const decision = !state.pitCandidate && !(state.pitQualified && state.containmentElapsed < 3.2) && !getVehiclePhysics(suspect)?.disabled && state.suspectAi.mode === 'driving'
-      ? stepSuspectDecision(state.decision,config.difficulty ?? 'normal',dt,distanceToPlayer,localRoadX,roadHalfWidth,(playerFrame.x-suspectPosition.x)*segmentRightX+(playerFrame.z-suspectPosition.z)*segmentRightZ)
+    const observedThreat=network?state.networkDrivers[0].observation?.cars.reduce<(typeof playerFrame)|{x:number;z:number}|undefined>((nearest,car)=>!nearest||Math.hypot(car.x-suspectPosition.x,car.z-suspectPosition.z)<Math.hypot(nearest.x-suspectPosition.x,nearest.z-suspectPosition.z)?car:nearest,undefined):playerFrame;
+    const observedDistance=observedThreat?Math.hypot(observedThreat.x-suspectPosition.x,observedThreat.z-suspectPosition.z):Infinity;
+    const decision = !state.pitCandidate && !recoveringFromPit && !getVehiclePhysics(suspect)?.disabled && state.suspectAi.mode === 'driving'
+      ? stepSuspectDecision(state.decision,config.difficulty ?? 'normal',dt,observedDistance,localRoadX,roadHalfWidth,observedThreat?(observedThreat.x-suspectPosition.x)*segmentRightX+(observedThreat.z-suspectPosition.z)*segmentRightZ:0)
       : state.decision;
     const laneWave = decision.offset;
     const boundaryPressure = Math.abs(localRoadX) > roadHalfWidth * .72
@@ -260,7 +271,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const looksStuck = planarSuspectSpeed < SUSPECT_RECOVERY.stuckSpeed
       && (boundaryRatio >= .72 || Math.abs(yawError) >= Math.PI * 48 / 180 || suspectFrame.forwardSpeed < -.5);
     ai.stalledFor = !state.pitCandidate && looksStuck ? ai.stalledFor + dt : Math.max(0, ai.stalledFor - dt * 2);
-    if (ai.mode === "driving" && !(state.pitQualified && state.containmentElapsed < 3.2) && isSuspectRecoveryNeeded({
+    if (!network && ai.mode === "driving" && !recoveringFromPit && isSuspectRecoveryNeeded({
       planarSpeed: planarSuspectSpeed,
       forwardSpeed: suspectFrame.forwardSpeed,
       yawError,
@@ -273,7 +284,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       ai.stalledFor = 0;
       logRuntimeEvent(state, "嫌犯受阻：AI 開始煞停、倒車與轉正");
     }
-    if (ai.mode !== "driving" && !state.pitCandidate && !(state.pitQualified && state.containmentElapsed < 3.2)) {
+    if (ai.mode !== "driving" && !state.pitCandidate && !recoveringFromPit) {
       ai.modeElapsed += dt;
       const nextMode = nextSuspectRecoveryMode(ai.mode, ai.modeElapsed, yawError, suspectFrame.forwardSpeed);
       if (nextMode !== ai.mode) {
@@ -284,7 +295,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     }
     const suspectDriveability = vehicleDriveability(state.suspectDamage);
     const suspectCanDrive = vehicleCanContinue(state.suspectDamage)&&!getVehiclePhysics(suspect)?.disabled;
-    const effectiveMode = state.pitCandidate || (state.pitQualified && state.containmentElapsed < 3.2) ? "driving" : ai.mode;
+    const effectiveMode = state.pitCandidate || recoveringFromPit ? "driving" : ai.mode;
     const steeringYaw = effectiveMode === "reversing" ? suspectReverseEscapeYaw(localRoadX) : desiredYaw;
     const steeringYawError = normalizeAngle(steeringYaw - suspectFrame.yaw);
     const pursuitBoost = distanceToPlayer < 17 ? 3 : 0;
@@ -292,14 +303,14 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const distanceToAhead=Math.max(0,segment.length/2-alongSegment);
     const baseCruise = suspectRoadCruise(segment, roadTarget(state.road, state.suspectRoadIndex, 1), grip, pursuitBoost, distanceToAhead);
     let suspectTargetSpeed = (networkControl?networkControl.speed:baseCruise * suspectForwardSpeedScale(yawError)) * (.45 + suspectDriveability * .55) * decision.speedScale;
-    if (!suspectCanDrive || (state.pitQualified && state.containmentElapsed < 3.2)) suspectTargetSpeed = 0;
+    if (!suspectCanDrive) suspectTargetSpeed = 0;
     if (effectiveMode === "braking") suspectTargetSpeed = 0;
     if (effectiveMode === "reversing") suspectTargetSpeed = -6 * grip;
     // Tyres need motion to turn; recovery uses a slow manoeuvre instead of a stationary yaw motor.
     if (effectiveMode === "realigning" && suspectCanDrive) suspectTargetSpeed = Math.min(3 * grip, Math.max(1.5 * grip, suspectTargetSpeed));
     const targetCore=getVehiclePhysics(suspect);
     if(targetCore){
-      if(state.pitCandidate)applyPitTargetControl(suspect,suspectFrame,state.suspectDamage,grip,dt);
+      if(state.pitCandidate||recoveringFromPit)applyPitTargetControl(suspect,suspectFrame,state.suspectDamage,grip,dt);
       else driveVehicleTarget(targetCore,{speed:suspectTargetSpeed,yawError:steeringYawError},grip,state.suspectDamage,dt,suspectFrame);
     }
 
@@ -345,45 +356,72 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
 
     const suspectSlow = planarSuspectSpeed < 4.2;
     const playerPosition = player.translation();
-    const currentPlayer = { ...state.player, x: playerPosition.x, z: playerPosition.z, yaw: playerFrame.yaw, speed: playerFrame.forwardSpeed, lateralSpeed: playerFrame.lateralSpeed };
+    const currentPlayer = { ...state.player, model:config.vehicle,x: playerPosition.x, z: playerPosition.z, yaw: playerFrame.yaw, speed: playerFrame.forwardSpeed, lateralSpeed: playerFrame.lateralSpeed };
     const currentSuspect = { ...state.suspect, x: suspectPosition.x, z: suspectPosition.z, yaw: suspectFrame.yaw, speed: suspectFrame.forwardSpeed, lateralSpeed: suspectFrame.lateralSpeed };
-    const automaticBlockade = !state.tacticalCommand && state.pitQualified;
-    const activeBlockade = state.tacticalCommand === "block-front" || automaticBlockade;
+    const pursuitEvent=stepPursuitEvents(state.pursuitEvents,{pitCount:state.successfulContacts,pitQualified:state.pitQualified,command:state.tacticalCommand,commandAt:state.commandAt,running:state.result==='playing'});
+    const automaticBlockade = pursuitEvent.automatic;
+    const activeBlockade = pursuitEvent.active;
+    if(pursuitEvent.started){state.blockade=makeBlockade();logRuntimeEvent(state,'新有效 PIT：後援等待車速與通道允許後協助封鎖');}
+    const supportAvailable:[boolean,boolean]=[support2,support3].map((body,i)=>!getVehiclePhysics(body)?.disabled&&vehicleCanPerformDriving(state.supportDamage[i])) as [boolean,boolean];
+    const playerAvailable=!getVehiclePhysics(player)?.disabled&&vehicleCanPerformDriving(state.playerDamage);
+    const currentSupports:[typeof state.supports[0],typeof state.supports[1]]=[{...state.supports[0],...supportSnapshots[0]},{...state.supports[1],...supportSnapshots[1]}];
+    const previousLeader=state.networkSupport.leader;
+    const formation=network?stepNetworkSupport(state.networkSupport,{network,player:currentPlayer,suspect:currentSuspect,supports:currentSupports,available:supportAvailable,playerAvailable,command:state.tacticalCommand,commandAt:state.commandAt,grip,dt,pitPreparing:!!state.pitCandidate}):null;
+    if(formation&&formation.leader!==null&&formation.leader!==previousLeader){
+      const message=`0${formation.leader+2} 已沿路接替主追；PIT 仍由玩家執行`;
+      logRuntimeEvent(state,message);
+      if(!state.tacticalCommand)updateRadioFeedback(state,{command:'take-primary',phase:'completed',message});
+    }
     if (activeBlockade) {
-      stepBlockade(state.blockade, { road: state.road, index: state.suspectRoadIndex, suspect: currentSuspect, supports: state.supports, player: currentPlayer, dt });
+      stepBlockade(state.blockade, { road: state.road, index: state.suspectRoadIndex, suspect: {...currentSuspect,pose:bodySnapshot(suspect).pose}, supports: currentSupports, player: currentPlayer, dt,available:supportAvailable });
     }
     const assignments = coordinatePursuit({
       command: automaticBlockade ? "block-front" : state.tacticalCommand,
-      unit2Available:!getVehiclePhysics(support2)?.disabled&&vehicleCanPerformDriving(state.supportDamage[0]),
-      unit3Available:!getVehiclePhysics(support3)?.disabled&&vehicleCanPerformDriving(state.supportDamage[1]),
+      unit2Available:supportAvailable[0],
+      unit3Available:supportAvailable[1],
       pitQualified: state.pitQualified,
       suspectStopped: state.tacticalCommand === "block-front" ? Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2 : suspectSlow,
       suspectDriveable: suspectCanDrive,
       playerDriveability,
       blockadePhase: state.blockade.phase,
     });
+    if(formation&&assignments.phase!=='containment'){
+      assignments.player=formation.playerRole;assignments.unit2=formation.slots[0].role;assignments.unit3=formation.slots[1].role;
+    }
+    if(activeBlockade&&assignments.phase==='containment'){
+      assignments.unit2=supportAvailable[0]?(state.blockade.frontUnit===0?'containment-front':'containment-rear'):'unavailable';
+      assignments.unit3=supportAvailable[1]?(state.blockade.frontUnit===1?'containment-front':'containment-rear'):'unavailable';
+    }
     state.supports[0].role = assignments.unit2;
     state.supports[1].role = assignments.unit3;
     state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
+    // A formation can assign both units the very same snapshot. Locate that
+    // immutable target once per step; never carry a position into another step.
+    const targetLocations=new Map<object,ReturnType<typeof locateRoad>>();
     [support2, support3].forEach((body, unit) => {
       const frame = measuredFrames[unit+2], position = body.translation();
       if(getVehiclePhysics(body)?.disabled||!vehicleCanPerformDriving(state.supportDamage[unit])){
         driveSupport(body,0,0,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
         state.supportArrivedFor[unit]=0;return;
       }
-      const index = closestRoadSegment(state.road, position.x, position.z, state.supportRoadIndices[unit]);
       const car = { x: position.x, z: position.z, yaw: frame.yaw, speed: frame.forwardSpeed, lateralSpeed: frame.lateralSpeed };
-      if(network){
-        const role=unit===0?assignments.unit2:assignments.unit3;
-        const target=role==='primary'||state.tacticalCommand||Math.hypot(currentPlayer.x-currentSuspect.x,currentPlayer.z-currentSuspect.z)>65?currentSuspect:currentPlayer;
-        const neighbors=[currentPlayer,currentSuspect,state.supports[1-unit]];
-        const routeControl=chaseRoute(network,state.networkDrivers[unit+1],car,target,state.elapsed,grip,unit===0?16:30,neighbors);
+      if(network&&formation){
+        const slot=formation.slots[unit],driver=state.networkDrivers[unit+1],previousMode=driver.local.mode,previousTurnNotice=driver.turnaroundReason;
+        const neighbors=[{...currentPlayer,model:config.vehicle,id:'player'},{...currentSuspect,model:'suspect' as const,id:'suspect'},{...currentSupports[1-unit],id:`support-${1-unit}`}];
+        const target=activeBlockade?currentSuspect:slot.target;
+        let targetLocation=targetLocations.get(target);
+        if(!targetLocation){targetLocation=locateRoad(network,target);targetLocations.set(target,targetLocation);}
+        const routeControl=chaseRoute(network,driver,{...car,model:unit===0?'patrol':'suv'},target,state.elapsed,grip,activeBlockade?16+unit*14:slot.gap,neighbors,slot.allowOvertake,!activeBlockade&&slot.target===currentSuspect,targetLocation);
+        if(driver.turnaroundReason&&driver.turnaroundReason!==previousTurnNotice)logRuntimeEvent(state,`0${unit+2} 後援：${driver.turnaroundReason}`);
         const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip):null;
-        const control=maneuver??routeControl;
+        const control=driver.turnaroundStopping?routeControl:maneuver??(activeBlockade&&waitForBlockadeRetry(state.blockade,car,currentSuspect)
+          ?{...routeControl,speed:0,arrived:false}:routeControl);
         driveSupport(body,control.yawError,control.speed,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
         state.supportArrivedFor[unit]=control.arrived?state.supportArrivedFor[unit]+dt:0;
+        if(previousMode!==driver.local.mode&&['blocked','reversing','following'].includes(driver.local.mode))logRuntimeEvent(state,`0${unit+2} 後援：${driver.local.reason}`);
         return;
       }
+      const index = closestRoadSegment(state.road, position.x, position.z, state.supportRoadIndices[unit]);
       const slot = supportSlot({ road: state.road, player: currentPlayer, suspect: currentSuspect, playerIndex: state.playerRoadIndex, suspectIndex: state.suspectRoadIndex, unit, role: unit === 0 ? assignments.unit2 : assignments.unit3, command: automaticBlockade ? "block-front" : state.tacticalCommand });
       const neighbors = [currentPlayer, currentSuspect, state.supports[1 - unit]];
       const maneuver = activeBlockade && state.supportAi[unit].mode === "driving"
@@ -394,11 +432,26 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       state.supportArrivedFor[unit] = control.arrived ? state.supportArrivedFor[unit] + dt : 0;
       if (control.modeChanged) logRuntimeEvent(state, `0${unit + 2} 後援：${{ driving: "已脫困，重新加入追逐", braking: "受阻煞停", reversing: "倒車離障", realigning: "轉回道路" }[state.supportAi[unit].mode]}`);
     });
-    if (state.tacticalCommand && state.tacticalCommand !== "terminate" && state.elapsed - state.commandAt > .7 && !(state.radioFeedback?.command === "request-pit" && state.elapsed - state.radioFeedback.at < 3)) {
-      const command = state.tacticalCommand;
-      const arrived = state.supportArrivedFor[0] > .6 && (command === "prepare-pit" || command === "block-front" ? state.supportArrivedFor[1] > .6 : true);
+    const feedbackCommand=activeBlockade?'block-front':state.tacticalCommand;
+    if (feedbackCommand && feedbackCommand !== "terminate" && state.elapsed - state.commandAt > .7 && !(state.radioFeedback?.command === "request-pit" && state.elapsed - state.radioFeedback.at < 3)) {
+      const command = feedbackCommand;
+      const selected=formation?.leader??formation?.candidate??formation?.preferred??0;
+      const required=formation?(command==='move-up'||command==='take-primary'?[selected]:[0,1].filter(i=>supportAvailable[i])):[0,1];
+      const arrived = formation?required.length>0&&required.every(i=>state.supportArrivedFor[i]>.6)&&(command!=='take-primary'||formation.leader!==null):state.supportArrivedFor[0] > .6 && (command === "prepare-pit" || command === "block-front" ? state.supportArrivedFor[1] > .6 : true);
       const reasons=[support2,support3].map((body,i)=>getVehiclePhysics(body)?.disabled?`0${i+2} 穩定翻覆`:!vehicleCanContinue(state.supportDamage[i])?`0${i+2} 動力失能`:!vehicleCanPerformDriving(state.supportDamage[i])?`0${i+2} 轉向受損`:network&&state.networkDrivers[i+1].blocked?`0${i+2} 路線受阻`:null).filter(Boolean);
-      const feedback = reasons.length?{phase:'unable' as const,message:`${reasons.join('、')}，無法完成目前協同指令`}:command === "block-front" ? blockadeFeedback(state.blockade) : tacticalFeedback(command, Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2, arrived, state.supportAi.some(ai => ai.mode !== "driving"));
+      let feedback = reasons.length?{phase:'unable' as const,message:`${reasons.join('、')}，無法完成目前協同指令`}:command === "block-front" ? blockadeFeedback(state.blockade) : tacticalFeedback(command, Math.hypot(suspectFrame.forwardSpeed, suspectFrame.lateralSpeed) < 4.2, arrived, state.supportAi.some(ai => ai.mode !== "driving"));
+      if(formation&&command!=='block-front'){
+        const unavailable=required.length===0||required.some(i=>!supportAvailable[i]);
+        const blocked=required.some(i=>state.networkDrivers[i+1].blocked);
+        const recovering=required.some(i=>['braking','reversing','recovering'].includes(state.networkDrivers[i+1].local.mode));
+        feedback=unavailable?{phase:'unable',message:'沒有可用後援能執行此指令'}:command==='prepare-pit'&&!playerAvailable?{phase:'unable',message:'玩家車輛目前無法安全領追，後援維持追蹤'}:blocked?{phase:'unable',message:'通道受阻，等待空間後繼續執行'}:tacticalFeedback(command,suspectSlow,arrived,recovering);
+        if(command==='take-primary'&&!unavailable)feedback.message=arrived?`0${selected+2} 已實際接替領追，PIT 仍由玩家執行；Q2 交回主追`:`0${selected+2} ${blocked?'通道受阻，等待安全通路':'正在沿路會合／超前，尚未完成接替'}`;
+        if(!supportAvailable[0]&&supportAvailable[1])feedback.message=`02 無法機動，由 03 支援；${feedback.message}`;
+      }
+      if(formation&&command==='block-front'){
+        feedback=supportAvailable.some(Boolean)?blockadeFeedback(state.blockade):{phase:'unable',message:'沒有可用後援；仍可由玩家依實際空間控制嫌犯'};
+        if(supportAvailable.filter(Boolean).length===1)feedback.message=`僅 0${supportAvailable[0]?2:3} 可機動；${feedback.message}`;
+      }
       updateRadioFeedback(state, { command, phase: feedback.phase, message: `${COMMAND_LABELS[command]}・${RADIO_PHASE_LABELS[feedback.phase]}：${feedback.message}` });
     }
 
@@ -412,18 +465,14 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       state.heldFor = 0;
       state.outcome = "escaped-containment";
       refreshPitAuthorization(state, config, currentSuspect, true);
-      if (state.tacticalCommand === "block-front") {
-        missBlockade(state.blockade, "嫌犯重新逃逸");
-      } else {
-        state.command = null;
-        state.tacticalCommand = null;
-        state.radioFeedback = null;
-      }
+      missBlockade(state.blockade, "嫌犯重新逃逸");
       logRuntimeEvent(state, "包圍失敗：嫌犯仍可駕駛並再次逃逸");
     }
 
     const finalPlayerFrame = bodyFrame(player);
-    state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
+    // Network lookup above already used this exact position; repeating it in the
+    // same fixed step cannot improve its nearest-edge result.
+    if(!network)state.playerRoadIndex = closestRoadSegment(state.road, playerPosition.x, playerPosition.z, state.playerRoadIndex);
     state.supportRoadIndices[0] = closestRoadSegment(state.road, support2Position.x, support2Position.z, state.supportRoadIndices[0]);
     state.supportRoadIndices[1] = closestRoadSegment(state.road, support3Position.x, support3Position.z, state.supportRoadIndices[1]);
     state.player = bodySnapshot(player);

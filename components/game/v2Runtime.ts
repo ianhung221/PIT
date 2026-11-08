@@ -26,6 +26,9 @@ import {generateNetwork} from '@/lib/networkGenerator';
 import {networkIndex} from '@/lib/roadNetwork';
 import {locationSegment,locateRoad} from '@/lib/roadLocation';
 import {makeNetworkDriver,type NetworkDriver} from '@/lib/networkPursuit';
+import {makeNetworkSupport,type NetworkSupportState} from '@/lib/networkSupport';
+import {makePursuitEvents,type PursuitEvents} from '@/lib/pursuitEvents';
+import {makeSuspectRecovery,type SuspectRecovery} from '@/lib/suspectRecovery';
 
 export type V2Result = "playing" | "success" | "failed" | "paused";
 
@@ -45,6 +48,9 @@ export interface SupportUnitSnapshot extends CarSnapshot {
 }
 
 export interface V2Runtime {
+  suspectRecovery:SuspectRecovery;
+  pursuitEvents:PursuitEvents;
+  networkSupport:NetworkSupportState;
   networkDrivers:[NetworkDriver,NetworkDriver,NetworkDriver];
   damageEpisodes: DamageEpisodes;
   supportDamage: [VehicleDamage,VehicleDamage];
@@ -107,6 +113,9 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     return {x:a.x+dx*distance-dz*2.7,z:a.z+dz*distance+dx*2.7,yaw:Math.atan2(-dx,-dz),speed,lateralSpeed:0};
   };
   return {
+    suspectRecovery:makeSuspectRecovery(),
+    pursuitEvents:makePursuitEvents(),
+    networkSupport:makeNetworkSupport(),
     networkDrivers:[makeNetworkDriver(`${seed}-suspect`),makeNetworkDriver(`${seed}-02`),makeNetworkDriver(`${seed}-03`)],
     damageEpisodes:makeDamageEpisodes(),supportDamage:[pristineDamage(),pristineDamage()],
     decision: makeSuspectDecision(config.behaviorSeed ?? seed),

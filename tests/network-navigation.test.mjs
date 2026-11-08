@@ -46,7 +46,9 @@ test('spatial road lookup matches exhaustive search near cell borders, offroad a
    const scores=n.edges.map(e=>{const a=index.nodes.get(e.a),b=index.nodes.get(e.b),dx=(b.x-a.x)/e.length,dz=(b.z-a.z)/e.length,t=Math.max(0,Math.min(e.length,(x-a.x)*dx+(z-a.z)*dz));return Math.hypot(x-a.x-dx*t,z-a.z-dz*t)+Math.min(6,6*(1-Math.abs(-Math.sin(yaw)*dx-Math.cos(yaw)*dz)))-(previous.edge===e.id?1:0);});
    assert.equal(locateRoad(n,{x,z,yaw},previous).edge,n.edges[scores.indexOf(Math.min(...scores))].id);
    const hint=i%road.segments.length,distances=road.segments.map((s,j)=>{const t=Math.max(-s.length/2,Math.min(s.length/2,-(x-s.x)*Math.sin(s.yaw)-(z-s.z)*Math.cos(s.yaw)));return Math.hypot(x-s.x+Math.sin(s.yaw)*t,z-s.z+Math.cos(s.yaw)*t)-(j===hint?.5:0);});
-   assert.equal(closestRoadSegment(road,x,z,hint),distances.indexOf(Math.min(...distances)));
+   const found=closestRoadSegment(road,x,z,hint);
+   assert.equal(found,distances.indexOf(Math.min(...distances)));
+   assert.equal(closestRoadSegment(road,x,z,found),found,'same position and updated hint stay on the same edge');
   }
  }
 });

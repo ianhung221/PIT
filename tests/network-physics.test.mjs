@@ -9,6 +9,9 @@ import {driveVehicleTarget} from '../lib/vehicleDriver.ts';
 import {WEATHER} from '../lib/gameConfig.ts';
 import {makeNetworkDriver,escapeRoute,chaseRoute} from '../lib/networkPursuit.ts';
 import {installNetwork as install} from './helpers/network-world.mjs';
+import {makeSuspectDecision,stepSuspectDecision} from '../lib/suspectDriving.ts';
+import {relativePosition} from '../lib/drivingObservation.ts';
+import {makeNetworkSupport,stepNetworkSupport} from '../lib/networkSupport.ts';
 await RAPIER.init();
 
 test('all four vehicle types cross actual city/country/highway paving seams under wheel physics',()=>{
@@ -92,7 +95,7 @@ test('representative T/cross/corner exits remain driveable for each vehicle in c
  }
 });
 
-test('naturally chosen pursuit routes keep a suspect and two backups driving across junctions',()=>{
+function naturalPursuit(observed=false,coordinated=false){
  for(const seed of ['CHASE-A','CHASE-B','CHASE-C'])for(const {grip} of Object.values(WEATHER)){
  const n=generateNetwork(seed),index=networkIndex(n),edge=index.edges.get(n.spawn.edge),a=index.nodes.get(edge.a),b=index.nodes.get(edge.b);
  const dx=(b.x-a.x)/edge.length,dz=(b.z-a.z)/edge.length,yaw=Math.atan2(-dx,-dz),s=physicalWorld('suspect');
@@ -101,13 +104,23 @@ test('naturally chosen pursuit routes keep a suspect and two backups driving acr
   const cars=['suspect','patrol','suv'].map((kind,i)=>{const d=110-i*30,v=s.add(kind,a.x+dx*d-dz*2.7,a.z+dz*d+dx*2.7);v.body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);return v;});
   const parked=s.add('patrol',a.x+dx*95-dz*2.7,a.z+dz*95+dx*2.7);parked.body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
   const parkedStart=physicsSnapshot(parked);
-  const states=cars.map((_,i)=>makeNetworkDriver(`${seed}-${i}`)),visited=new Set(),supportRoads=[new Set(),new Set()];let maxGap=0;
+  const states=cars.map((_,i)=>makeNetworkDriver(`${seed}-${i}`)),visited=new Set(),supportRoads=[new Set(),new Set()],decision=makeSuspectDecision(seed),coordination=makeNetworkSupport();let maxGap=0;
   for(let step=0;step<60*180/Math.sqrt(grip);step++){
-   const snapshots=cars.map(physicsSnapshot),player=physicsSnapshot(parked);
+   // Preserve the original uncoordinated fixture's inputs for comparison.
+   // The production-coordination case supplies model sizes and stable observation IDs.
+   const snapshots=cars.map((v,i)=>coordinated?{...physicsSnapshot(v),model:['suspect','patrol','suv'][i],id:`unit-${i}`}:physicsSnapshot(v));
+   const player=coordinated?{...physicsSnapshot(parked),id:'player',model:'patrol'}:physicsSnapshot(parked);
+   const formation=coordinated?stepNetworkSupport(coordination,{network:n,player,suspect:snapshots[0],supports:snapshots.slice(1),available:[true,true],playerAvailable:true,command:null,commandAt:0,dt:1/60,grip}):null;
    driveVehicleTarget(parked,{speed:0,yawError:0},grip);
    for(let i=0;i<cars.length;i++){
     const leader=Math.hypot(player.x-snapshots[0].x,player.z-snapshots[0].z)>65?snapshots[0]:player;
-    const target=i===0?escapeRoute(n,states[i],snapshots[i],step/60,grip):chaseRoute(n,states[i],snapshots[i],leader,step/60,grip,i===1?16:30,[player,...snapshots.filter((_,j)=>i!==j)]);
+    const difficulty=seed==='CHASE-A'?'basic':seed==='CHASE-B'?'normal':'advanced';
+    const slot=i>0?formation?.slots[i-1]:null;
+    const target=i===0?escapeRoute(n,states[i],snapshots[i],step/60,grip,0,observed?[player,...snapshots.slice(1)]:undefined,difficulty,decision.duration>0?decision.offset:undefined):chaseRoute(n,states[i],snapshots[i],slot?.target??leader,step/60,grip,slot?.gap??(i===1?16:30),[player,...snapshots.filter((_,j)=>i!==j)],slot?.allowOvertake);
+    if(observed&&i===0){
+     const threat=states[0].observation.cars.toSorted((a,b)=>Math.hypot(a.x-snapshots[0].x,a.z-snapshots[0].z)-Math.hypot(b.x-snapshots[0].x,b.z-snapshots[0].z))[0];
+     stepSuspectDecision(decision,difficulty,1/60,threat?Math.hypot(threat.x-snapshots[0].x,threat.z-snapshots[0].z):Infinity,states[0].location.offset,index.edges.get(states[0].location.edge).width/2-1.25,threat?relativePosition(snapshots[0],threat).side:0);
+    }
     driveVehicleTarget(cars[i],target,grip);
    }
    s.world.step();visited.add(states[0].location.edge);supportRoads.forEach((roads,i)=>roads.add(states[i+1].location.edge));
@@ -121,4 +134,7 @@ test('naturally chosen pursuit routes keep a suspect and two backups driving acr
   assert.ok(Math.hypot(physicsSnapshot(parked).x-parkedStart.x,physicsSnapshot(parked).z-parkedStart.z)<.5,'backups must pass without pushing the parked player');
  }finally{s.dispose();}
  }
-});
+}
+test('naturally chosen pursuit routes keep a suspect and two backups driving across junctions',()=>naturalPursuit());
+test('observing suspects and backups physically follow three maps and difficulties in every weather',()=>naturalPursuit(true));
+test('coordinated backup lead and follow targets survive natural cross-town pursuit',()=>naturalPursuit(true,true));

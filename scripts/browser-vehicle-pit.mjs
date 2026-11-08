@@ -9,9 +9,11 @@ export async function verifyVehiclePit({evaluate,command,delay,capture,waitFor})
   const {runtime:r,bodies}=window.__pitInspect(),cars=[r.player,r.suspect,...r.supports],available=[...bodies];
   const ordered=cars.map(c=>{available.sort((a,b)=>Math.hypot(a.translation().x-c.x,a.translation().z-c.z)-Math.hypot(b.translation().x-c.x,b.translation().z-c.z));return available.shift();});
   let yaw=0,origin={x:0,z:0};
-  if(r.road.network){const n=r.road.network,e=n.edges.find(e=>e.id===n.spawn.edge),a=n.nodes.find(a=>a.id===n.spawn.from),b=n.nodes.find(b=>b.id===(e.a===a.id?e.b:e.a)),dx=(b.x-a.x)/e.length,dz=(b.z-a.z)/e.length;yaw=Math.atan2(-dx,-dz);origin={x:a.x+dx*250-dz*2.7,z:a.z+dz*250+dx*2.7};}
+  if(r.road.network){const n=r.road.network,e=n.edges.find(e=>e.id===n.spawn.edge),a=n.nodes.find(a=>a.id===n.spawn.from),b=n.nodes.find(b=>b.id===(e.a===a.id?e.b:e.a)),dx=(b.x-a.x)/e.length,dz=(b.z-a.z)/e.length,lane=${JSON.stringify(Number(process.env.PIT_AI_LANE_OFFSET??2.7))};yaw=Math.atan2(-dx,-dz);origin={x:a.x+dx*250-dz*lane,z:a.z+dz*250+dx*lane};}
   const rotate=(x,z)=>({x:Math.cos(yaw)*x+Math.sin(yaw)*z,z:-Math.sin(yaw)*x+Math.cos(yaw)*z});
-  ordered.forEach((b,i)=>{const p=rotate([2.05,0,-5,5][i],[-20.1,-24,15,22][i]),v=rotate(i===0?-7:0,i===0?-16:i===1?-12:0);b.setTranslation({x:origin.x+p.x,y:-.325,z:origin.z+p.z},true);b.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);b.setLinvel({...v,y:0},true);b.setAngvel({x:0,y:0,z:0},true);});
+  const close=${process.env.PIT_AI_CLOSE_SUPPORT==='true'};
+  const positioned=${process.env.PIT_AI_POSITIONED_SUPPORT==='true'};
+  ordered.forEach((b,i)=>{const p=rotate((close||positioned?[2.05,0,0,0]:[2.05,0,-5,5])[i],(positioned?[-20.1,-24,-38,-6]:close?[-20.1,-24,-4,10]:[-20.1,-24,15,22])[i]),v=rotate(i===0?-7:0,i===0?-16:i===1||close||positioned?-12:0);b.setTranslation({x:origin.x+p.x,y:-.325,z:origin.z+p.z},true);b.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);b.setLinvel({...v,y:0},true);b.setAngvel({x:0,y:0,z:0},true);});
  })()`);
  await tap('p');
  try {await waitFor(`!!window.__pitInspect().runtime.diagnostics.lastSuccess`,'mission-physical-pit');}

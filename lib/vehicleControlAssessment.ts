@@ -38,7 +38,16 @@ function hull(points: Point[]): Polygon {
 function inside(p: Point, polygon: Polygon) {
   return polygon.every((a,i)=>cross(a,polygon[(i+1)%polygon.length],p)>=-1e-8);
 }
-function intersection(a: Polygon,b: Polygon): Point | null {
+type Bounds={minX:number;maxX:number;minZ:number;maxZ:number};
+function bounds(polygon:Polygon):Bounds {
+  const b={minX:Infinity,maxX:-Infinity,minZ:Infinity,maxZ:-Infinity};
+  for(const p of polygon){b.minX=Math.min(b.minX,p.x);b.maxX=Math.max(b.maxX,p.x);b.minZ=Math.min(b.minZ,p.z);b.maxZ=Math.max(b.maxZ,p.z);}
+  return b;
+}
+// Only reject clearly separated polygons; close cases use the original exact test.
+const boundsOverlap=(a:Bounds,b:Bounds)=>a.maxX>=b.minX-1e-5&&b.maxX>=a.minX-1e-5&&a.maxZ>=b.minZ-1e-5&&b.maxZ>=a.minZ-1e-5;
+function intersection(a: Polygon,b: Polygon,ab=bounds(a),bb=bounds(b)): Point | null {
+  if(!boundsOverlap(ab,bb))return null;
   for (const p of a) if(inside(p,b)) return p;
   for (const p of b) if(inside(p,a)) return p;
   for(let i=0;i<a.length;i++) for(let j=0;j<b.length;j++) {
@@ -86,10 +95,10 @@ export function hasControlEnclosure(origin: Point, obstacles: Polygon[]): boolea
   const disk=Array.from({length:12},(_,i)=>({x:radius*Math.cos(i*Math.PI/6),z:radius*Math.sin(i*Math.PI/6)}));
   const inflated=obstacles.map(p=>hull(p.flatMap(v=>disk.map(d=>({x:v.x+d.x,z:v.z+d.z})))));
   if(inflated.some(p=>inside(origin,p))) return false;
-  const centers=inflated.map(center), links=inflated.map(()=>[] as {to:number;angle:number}[]);
+  const centers=inflated.map(center), extents=inflated.map(bounds), links=inflated.map(()=>[] as {to:number;angle:number}[]);
   const turn=(a:Point,b:Point)=>Math.atan2((a.x-origin.x)*(b.z-origin.z)-(a.z-origin.z)*(b.x-origin.x),(a.x-origin.x)*(b.x-origin.x)+(a.z-origin.z)*(b.z-origin.z));
   for(let i=0;i<inflated.length;i++) for(let j=i+1;j<inflated.length;j++) {
-    const shared=intersection(inflated[i],inflated[j]); if(!shared) continue;
+    const shared=intersection(inflated[i],inflated[j],extents[i],extents[j]); if(!shared) continue;
     const angle=turn(centers[i],shared)+turn(shared,centers[j]);
     links[i].push({to:j,angle}); links[j].push({to:i,angle:-angle});
   }
@@ -117,7 +126,22 @@ export function assessVehicleControl(suspect: ControlCar, blockers: readonly Con
   const walls=local.flatMap(g=>g.walls);
   const nearby=blockers.filter(c=>supported(c)&&distance(c,suspect)<18);
   const obstacles=[...walls,...nearby.flatMap(c=>controlFootprint(c))];
-  const valid=(car:ControlCar,padding=0)=>local.some(g=>inside(car,g.surface)) && !controlFootprint(car,padding).some(p=>obstacles.some(o=>intersection(p,o)));
+  const obstacleBounds=obstacles.map(bounds);
+  // An orientation-independent sphere encloses every physical chassis corner,
+  // including tilt and the largest search padding. If its square projection is
+  // clear, the more costly exact footprint cannot intersect an obstacle.
+  const reach=suspect.pose
+    ? Math.max(...chassisShapes(suspect.model).map(s=>Math.hypot(Math.abs(s.position[0])+s.halfExtents[0]+.065,Math.abs(s.position[1])+s.halfExtents[1],Math.abs(s.position[2])+s.halfExtents[2]+.065)))
+    : Math.max(...vehicleColliderStrips(suspect.model).map(s=>Math.hypot(s.halfWidth+.065,Math.abs(s.z)+s.halfLength+.065)));
+  const valid=(car:ControlCar,padding=0)=>{
+    if(!local.some(g=>inside(car,g.surface)))return false;
+    const envelope={minX:car.x-reach,maxX:car.x+reach,minZ:car.z-reach,maxZ:car.z+reach};
+    if(!obstacleBounds.some(b=>boundsOverlap(envelope,b)))return true;
+    return !controlFootprint(car,padding).some(p=>{
+      const extent=bounds(p);
+      return obstacles.some((o,i)=>intersection(p,o,extent,obstacleBounds[i]));
+    });
+  };
   if(!valid(suspect,-.025)) return answer("uncertain","車身接觸／交疊尚在解析，仍在評估");
   const stable=[...walls,...nearby.filter(stationary).flatMap(c=>controlFootprint(c))];
   if(hasControlEnclosure(suspect,stable)) return answer("blocked","玩家／警車與實體護欄已封閉出口，穩定控制中");

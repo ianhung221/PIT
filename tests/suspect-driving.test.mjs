@@ -55,7 +55,8 @@ test('difficulty decisions steer a real practice vehicle instead of teleporting 
       return maxOffset;
     } finally {f.dispose();}
   }
-  const straight=run('basic'),evasion=run('advanced');
-  t.diagnostic(`max lateral displacement basic=${straight.toFixed(2)} m advanced=${evasion.toFixed(2)} m`);
+  const straight=run('basic'),normal=run('normal'),evasion=run('advanced');
+  t.diagnostic(`max lateral displacement basic=${straight.toFixed(2)} m normal=${normal.toFixed(2)} m advanced=${evasion.toFixed(2)} m`);
+  assert.ok(normal>straight+.1);
   assert.ok(evasion>straight+.2);
 });

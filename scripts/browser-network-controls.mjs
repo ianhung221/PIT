@@ -29,11 +29,21 @@ export async function verifyNetworkControls({evaluate,command,delay,capture}){
  await key('ArrowUp','keyUp');await tap('c');
  await key('q');await delay(200);assert.equal(await evaluate('!!document.querySelector(".radio-wheel")'),true);await key('q','keyUp');await tap('q');
  await tap('p');await delay(200);const paused=(await read()).elapsed;await delay(400);assert.equal((await read()).elapsed,paused);await tap('p');
- for(const [label,expected] of [['準備執行 PIT','prepare-pit'],['第二單位靠近','move-up'],['封鎖嫌犯車頭','block-front'],['接替主追單位','take-primary']]){
+ for(const [label,expected] of [['準備執行 PIT','prepare-pit'],['第二單位靠近','move-up'],['協助封鎖嫌犯','block-front'],['接替主追單位','take-primary']]){
   await evaluate('document.querySelector(".radio-trigger").click()');await delay(150);
   await evaluate(`([...document.querySelectorAll('.radio-wheel>button')].find(b=>b.textContent.includes(${JSON.stringify(label)}))).click()`);await delay(350);
   assert.equal(await evaluate('window.__pitInspect().runtime.tacticalCommand'),expected);
  }
  const final=await read();assert.equal(final.result,'playing');
+ // Q1 must not cancel an explicitly armed Q4. Q6 then stops this mission.
+ const radio=async label=>{await evaluate('document.querySelector(".radio-trigger").click()');await delay(100);await evaluate(`([...document.querySelectorAll('.radio-wheel>button')].find(b=>b.textContent.includes(${JSON.stringify(label)}))).click()`);await delay(200);};
+ await radio('協助封鎖嫌犯');
+ const beforeQ1=await evaluate('window.__pitInspect().runtime.commandAt');
+ await radio('請求 PIT 授權');
+ assert.equal(await evaluate('window.__pitInspect().runtime.tacticalCommand'),'block-front');
+ assert.equal(await evaluate('window.__pitInspect().runtime.commandAt'),beforeQ1);
+ await radio('終止追逐');
+ const ended=await read();assert.equal(ended.result,'failed');await delay(500);
+ assert.equal((await read()).elapsed,ended.elapsed);
  console.log('network controls passed',{initial,final});
 }
