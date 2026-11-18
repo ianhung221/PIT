@@ -18,7 +18,7 @@ import { CAMERA_LABELS, CAMERA_SETTINGS, QUALITY_SETTINGS, SCENES, VEHICLES, WEA
 import { coordinatePursuit, nextTacticalCommand, ROLE_LABELS, COMMAND_LABELS } from "@/lib/pursuitCoordinator";
 import {cancelPursuitAttempt} from '@/lib/pursuitEvents';
 import { vehicleDriveability } from "@/lib/vehicleDamage";
-import { makeBlockade } from "@/lib/supportContainment";
+import { makeBlockade, missBlockade } from "@/lib/supportContainment";
 import { initialControl, CONTROL } from "@/lib/vehicleControlAssessment";
 import { makePlayerDriving, resetPlayerDriving, noteDrivingKey } from "@/lib/playerDriving";
 import { PlayerStatus } from './PlayerStatus';
@@ -172,7 +172,7 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
     if (state.result !== "playing") return;
     state.command = command;
     state.tacticalCommand = nextTacticalCommand(state.tacticalCommand, command);
-    if (command !== "request-pit") { state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; state.blockade = makeBlockade(); cancelPursuitAttempt(state.pursuitEvents,state.successfulContacts,state.commandAt); }
+    if (command !== "request-pit") { missBlockade(state.blockade,"新指令取消原補位");state.commandAt = state.elapsed; state.supportArrivedFor = [0, 0]; state.blockade = makeBlockade(); cancelPursuitAttempt(state.pursuitEvents,state.successfulContacts,state.commandAt); }
     updateRadioFeedback(state, { command, phase: "received", message: `${COMMAND_LABELS[command]}・已接收` });
     setRadio(state.radioFeedback);
     if (command === "request-pit") {

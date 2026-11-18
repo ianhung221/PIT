@@ -56,6 +56,17 @@ export function drivingFootprintOnRoad(n:RoadNetwork,box:DrivingBox){
   return (cells.get(`${Math.floor(p.x/64)},${Math.floor(p.z/64)}`)??[]).some(poly=>poly.every((a,i)=>{const b=poly[(i+1)%poly.length];return (b.x-a.x)*(p.z-a.z)-(b.z-a.z)*(p.x-a.x)>=-1e-6;}));
  }));
 }
+/** NetworkWorld installs a flat supporting floor inside these bounds. This is
+ * for short incident manoeuvres only, not a replacement for road routing.
+ * Real buildings, rails and boundary walls remain obstacles. */
+export function localIncidentFootprintClear(n:RoadNetwork,box:DrivingBox,incident:{x:number;z:number}){
+ const b=n.bounds;
+ if(![-1,1].every(side=>[-1,1].every(forward=>{
+  const p=drivingPoint(box,side*box.halfX,forward*box.halfZ);
+  return Math.hypot(p.x-incident.x,p.z-incident.z)<=32&&p.x>b.minX&&p.x<b.maxX&&p.z>b.minZ&&p.z<b.maxZ;
+ })))return false;
+ return !nearbyDrivingObjects(n,box,Math.hypot(box.halfX,box.halfZ)).some(o=>boxesOverlap(box,o));
+}
 function lineBlocked(a:{x:number;z:number},b:{x:number;z:number},box:DrivingBox){
  const start=relativePosition(box,a),end=relativePosition(box,b);let lo=0,hi=1;
  for(const [p,q,h] of [[start.side,end.side,box.halfX],[start.forward,end.forward,box.halfZ]]){

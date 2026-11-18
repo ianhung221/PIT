@@ -1,6 +1,6 @@
 import { SUSPECT, vehicleColliderStrips, type VehicleId } from "./gameConfig.ts";
 import { chassisShapes } from './vehiclePhysicsConfig.ts';
-import { vehicleWorldPoint } from './vehiclePose.ts';
+import { normalizedVehicleQuaternion, snapshotQuaternion } from './vehiclePose.ts';
 import type { CarSnapshot } from "../types/game.ts";
 import type { RoadPoint, RoadSection } from "./roadGeometry.ts";
 
@@ -66,11 +66,21 @@ function rectangle(p: Point,yaw: number,halfWidth: number,halfLength: number): P
 }
 /** Exact compound-strip outlines shared with Rapier, not decorative meshes. */
 export function controlFootprint(car: ControlCar, padding=0): Polygon[] {
-  if(car.pose)return chassisShapes(car.model).map(shape=>hull([-1,1].flatMap(x=>[-1,1].flatMap(y=>[-1,1].map(z=>vehicleWorldPoint(car,{
-    x:shape.position[0]+x*(shape.halfExtents[0]+padding),
-    y:shape.position[1]+y*shape.halfExtents[1],
-    z:shape.position[2]+z*(shape.halfExtents[2]+padding),
-  }))))));
+  if(car.pose){
+    // Match vehicleWorldPoint's rotation, sharing its normalization for all corners.
+    const q=normalizedVehicleQuaternion(snapshotQuaternion(car));
+    return chassisShapes(car.model).map(shape=>{
+      const corners:Point[]=[];
+      for(let sx=-1;sx<=1;sx+=2)for(let sy=-1;sy<=1;sy+=2)for(let sz=-1;sz<=1;sz+=2){
+        const x=shape.position[0]+sx*(shape.halfExtents[0]+padding);
+        const y=shape.position[1]+sy*shape.halfExtents[1];
+        const z=shape.position[2]+sz*(shape.halfExtents[2]+padding);
+        const tx=2*(q.y*z-q.z*y),ty=2*(q.z*x-q.x*z),tz=2*(q.x*y-q.y*x);
+        corners.push({x:car.x+(x+q.w*tx+q.y*tz-q.z*ty),z:car.z+(z+q.w*tz+q.x*ty-q.y*tx)});
+      }
+      return hull(corners);
+    });
+  }
   return vehicleColliderStrips(car.model).map(strip=>rectangle({x:car.x+Math.sin(car.yaw)*strip.z,z:car.z+Math.cos(car.yaw)*strip.z},car.yaw,strip.halfWidth+padding,strip.halfLength+padding));
 }
 export function controlRoadGeometry(sections: readonly RoadSection[]) {
@@ -90,10 +100,10 @@ const stationary = (c: ControlCar) => supported(c)&&Math.hypot(c.speed,c.lateral
  * after unlimited reversing/turning. Search failure alone is never a certificate.
  * Connecting edges run THROUGH an actual shared point of the two convex shapes;
  * simply connecting their centers would not in general stay inside the union. */
+const enclosureRadius=SUSPECT.width/2-.06;
+const enclosureDisk=Array.from({length:12},(_,i)=>({x:enclosureRadius*Math.cos(i*Math.PI/6),z:enclosureRadius*Math.sin(i*Math.PI/6)}));
 export function hasControlEnclosure(origin: Point, obstacles: Polygon[]): boolean {
-  const radius=SUSPECT.width/2-.06;
-  const disk=Array.from({length:12},(_,i)=>({x:radius*Math.cos(i*Math.PI/6),z:radius*Math.sin(i*Math.PI/6)}));
-  const inflated=obstacles.map(p=>hull(p.flatMap(v=>disk.map(d=>({x:v.x+d.x,z:v.z+d.z})))));
+  const inflated=obstacles.map(p=>hull(p.flatMap(v=>enclosureDisk.map(d=>({x:v.x+d.x,z:v.z+d.z})))));
   if(inflated.some(p=>inside(origin,p))) return false;
   const centers=inflated.map(center), extents=inflated.map(bounds), links=inflated.map(()=>[] as {to:number;angle:number}[]);
   const turn=(a:Point,b:Point)=>Math.atan2((a.x-origin.x)*(b.z-origin.z)-(a.z-origin.z)*(b.x-origin.x),(a.x-origin.x)*(b.x-origin.x)+(a.z-origin.z)*(b.z-origin.z));
@@ -125,7 +135,8 @@ export function assessVehicleControl(suspect: ControlCar, blockers: readonly Con
   if(!local.some(g=>inside(suspect,g.surface))) return answer("uncertain","道路邊界資料不足，仍在評估");
   const walls=local.flatMap(g=>g.walls);
   const nearby=blockers.filter(c=>supported(c)&&distance(c,suspect)<18);
-  const obstacles=[...walls,...nearby.flatMap(c=>controlFootprint(c))];
+  const blockerShapes=nearby.map(car=>controlFootprint(car));
+  const obstacles=[...walls,...blockerShapes.flat()];
   const obstacleBounds=obstacles.map(bounds);
   // An orientation-independent sphere encloses every physical chassis corner,
   // including tilt and the largest search padding. If its square projection is
@@ -143,13 +154,12 @@ export function assessVehicleControl(suspect: ControlCar, blockers: readonly Con
     });
   };
   if(!valid(suspect,-.025)) return answer("uncertain","車身接觸／交疊尚在解析，仍在評估");
-  const stable=[...walls,...nearby.filter(stationary).flatMap(c=>controlFootprint(c))];
+  const stable=[...walls,...blockerShapes.flatMap((shapes,index)=>stationary(nearby[index])?shapes:[])];
   if(hasControlEnclosure(suspect,stable)) return answer("blocked","玩家／警車與實體護欄已封閉出口，穩定控制中");
   // Deterministic bounded hybrid search; each primitive sweeps the entire body.
   // Padding bounds motion between samples, including the outer turning corner.
-  const queue=[{car:suspect,first:0,depth:0}], seen=new Set<string>(); let nodes=0;
+  const queue=[{car:suspect,first:0,depth:0,priority:0}], seen=new Set<string>(); let nodes=0;
   while(queue.length && nodes<maxNodes) {
-    queue.sort((a,b)=>(distance(b.car,suspect)-b.depth*.05)-(distance(a.car,suspect)-a.depth*.05));
     const state=queue.shift()!;nodes++;
     for(const direction of [1,-1]) for(const curve of [0,-1,1]) {
       let car={...state.car}; let clear=true;
@@ -163,7 +173,17 @@ export function assessVehicleControl(suspect: ControlCar, blockers: readonly Con
       const first=state.first || direction;
       if(distance(car,suspect)>=CONTROL.escapeDistance) return answer("open",first<0?"後方仍可倒車轉出，尚未控制":"前方或側方仍有可行出口，尚未控制",nodes);
       const key=`${Math.round(car.x/.4)},${Math.round(car.z/.4)},${Math.round(car.yaw/.15)}`;
-      if(!seen.has(key)&&state.depth<18) { seen.add(key);queue.push({car,first,depth:state.depth+1}); }
+      if(!seen.has(key)&&state.depth<18) {
+        seen.add(key);
+        const depth=state.depth+1,priority=distance(car,suspect)-depth*.05;
+        // Insert after equal priorities to preserve the stable search order.
+        let low=0,high=queue.length;
+        while(low<high){
+          const middle=(low+high)>>>1;
+          if(queue[middle].priority>=priority)low=middle+1;else high=middle;
+        }
+        queue.splice(low,0,{car,first,depth,priority});
+      }
     }
   }
   return answer("uncertain",nearby.some(c=>!stationary(c))?"封鎖車仍在移動，不能視為穩定障礙":"暫時受阻，尚無完整封鎖證據；仍在評估",nodes);

@@ -57,6 +57,12 @@ import {stepPursuitEvents} from '@/lib/pursuitEvents';
 import {stepSuspectRecovery} from '@/lib/suspectRecovery';
 
 type BodyFrame=VehicleFrame;
+type TimingSink={samples:{name:string;ms:number;phase:string}[];phase:()=>string};
+function timed<T>(name:string,action:()=>T):T{
+  const sink=(globalThis as typeof globalThis & {__pitDetailTiming?:TimingSink}).__pitDetailTiming;
+  if(!sink)return action();
+  const start=performance.now();try{return action();}finally{sink.samples.push({name,ms:performance.now()-start,phase:sink.phase()});}
+}
 function bodySnapshot(body:RapierRigidBody){
   const core=getVehiclePhysics(body);return core?physicsSnapshot(core):vehicleSnapshot(body);
 }
@@ -159,11 +165,11 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       // Moving cars return before enclosure geometry is consulted. Keep the same
       // assessment/timer path while avoiding a world-object scan every moving step.
       const moving=Math.hypot(cars[1].speed,cars[1].lateralSpeed)>=CONTROL.speed||Math.abs(cars[1].angularSpeed)>=CONTROL.angularSpeed;
-      const geometry=moving?[]:state.road.network?networkControlGeometry(state.road.network,cars[1]):(controlGeometryRef.current ??=controlRoadGeometry(roadSections(state.road))).slice(Math.max(0,state.suspectRoadIndex-1),state.suspectRoadIndex+2);
+      const geometry=timed('controlGeometry',()=>moving?[]:state.road.network?networkControlGeometry(state.road.network,cars[1]):(controlGeometryRef.current ??=controlRoadGeometry(roadSections(state.road))).slice(Math.max(0,state.suspectRoadIndex-1),state.suspectRoadIndex+2));
       const due=state.elapsed-state.controlCheckedAt>=CONTROL.interval;
-      const control=assessVehicleControl({...cars[1],model:'suspect'},[
+      const control=timed('assessment',()=>assessVehicleControl({...cars[1],model:'suspect'},[
         {...cars[0],model:config.vehicle},{...cars[2],model:'patrol'},{...cars[3],model:'suv'},
-      ],geometry,due?CONTROL.maxNodes:0);
+      ],geometry,due?CONTROL.maxNodes:0));
       if(due||control.status!=='uncertain'||state.control.status!=='open')state.control=control;
       if(due)state.controlCheckedAt=state.elapsed;
       const core=getVehiclePhysics(suspect),driveable=vehicleCanContinue(state.suspectDamage)&&!core?.disabled;
@@ -361,7 +367,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     const pursuitEvent=stepPursuitEvents(state.pursuitEvents,{pitCount:state.successfulContacts,pitQualified:state.pitQualified,command:state.tacticalCommand,commandAt:state.commandAt,running:state.result==='playing'});
     const automaticBlockade = pursuitEvent.automatic;
     const activeBlockade = pursuitEvent.active;
-    if(pursuitEvent.started){state.blockade=makeBlockade();logRuntimeEvent(state,'新有效 PIT：後援等待車速與通道允許後協助封鎖');}
+    if(pursuitEvent.started){missBlockade(state.blockade,'新事件清理原補位');state.blockade=makeBlockade();logRuntimeEvent(state,'新有效 PIT：後援等待車速與通道允許後協助封鎖');}
     const supportAvailable:[boolean,boolean]=[support2,support3].map((body,i)=>!getVehiclePhysics(body)?.disabled&&vehicleCanPerformDriving(state.supportDamage[i])) as [boolean,boolean];
     const playerAvailable=!getVehiclePhysics(player)?.disabled&&vehicleCanPerformDriving(state.playerDamage);
     const currentSupports:[typeof state.supports[0],typeof state.supports[1]]=[{...state.supports[0],...supportSnapshots[0]},{...state.supports[1],...supportSnapshots[1]}];
@@ -373,7 +379,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       if(!state.tacticalCommand)updateRadioFeedback(state,{command:'take-primary',phase:'completed',message});
     }
     if (activeBlockade) {
-      stepBlockade(state.blockade, { road: state.road, index: state.suspectRoadIndex, suspect: {...currentSuspect,pose:bodySnapshot(suspect).pose}, supports: currentSupports, player: currentPlayer, dt,available:supportAvailable });
+      timed('stepBlockade',()=>stepBlockade(state.blockade, { road: state.road, index: state.suspectRoadIndex, suspect: {...currentSuspect,pose:bodySnapshot(suspect).pose}, supports: currentSupports, player: currentPlayer, dt,available:supportAvailable }));
     }
     const assignments = coordinatePursuit({
       command: automaticBlockade ? "block-front" : state.tacticalCommand,
@@ -411,9 +417,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         const target=activeBlockade?currentSuspect:slot.target;
         let targetLocation=targetLocations.get(target);
         if(!targetLocation){targetLocation=locateRoad(network,target);targetLocations.set(target,targetLocation);}
-        const routeControl=chaseRoute(network,driver,{...car,model:unit===0?'patrol':'suv'},target,state.elapsed,grip,activeBlockade?16+unit*14:slot.gap,neighbors,slot.allowOvertake,!activeBlockade&&slot.target===currentSuspect,targetLocation);
+        const routeControl=chaseRoute(network,driver,{...car,model:unit===0?'patrol':'suv'},target,state.elapsed,grip,activeBlockade?16+unit*6:slot.gap,neighbors,slot.allowOvertake,!activeBlockade&&slot.target===currentSuspect,targetLocation);
         if(driver.turnaroundReason&&driver.turnaroundReason!==previousTurnNotice)logRuntimeEvent(state,`0${unit+2} 後援：${driver.turnaroundReason}`);
-        const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip):null;
+        const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?timed('blockadeControl',()=>blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip)):null;
         const control=driver.turnaroundStopping?routeControl:maneuver??(activeBlockade&&waitForBlockadeRetry(state.blockade,car,currentSuspect)
           ?{...routeControl,speed:0,arrived:false}:routeControl);
         driveSupport(body,control.yawError,control.speed,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
