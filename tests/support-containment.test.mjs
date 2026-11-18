@@ -26,10 +26,11 @@ test("Q4 stays armed at speed and engages after slowdown without another command
   assert.deepEqual(state.anchor, anchor, "PIT spin must not flip the chosen road route");
 });
 
-test("narrow or occupied corridors and distant support report a missed opportunity without a false completion", () => {
+test("narrow or occupied corridors and all-distant support report inability without false completion", () => {
   for (const setup of [
     args => { args.road = { ...road, segments: road.segments.map(s => ({ ...s, width: 6 })) }; },
-    args => { args.supports[1] = car(0, -100); },
+    // A distant colleague no longer prevents a nearby unit from approaching.
+    args => { args.supports = [car(0,-100),car(0,-120)]; },
   ]) {
     const state = makeBlockade(), input = base(); setup(input);
     for (let i = 0; i < 30; i++) stepBlockade(state, input);

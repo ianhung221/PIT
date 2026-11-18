@@ -1,0 +1,152 @@
+{
+  "description": "7753 controlled browser PIT snapshot before planning; pending search cleared for independent physical reconstruction; not natural pursuit.",
+  "seed": "PIT-20261109-7753",
+  "blockade": {
+    "phase": "approaching",
+    "elapsed": 8.233333762735128,
+    "slowFor": 12.63333399221301,
+    "fastFor": 0,
+    "reason": "後援距離過遠",
+    "anchor": {
+      "x": -209.29092407226562,
+      "z": -56.455753326416016,
+      "yaw": 4.71238898038469,
+      "index": 44,
+      "side": -4.4501654183056765,
+      "front": 5.29273723465932,
+      "rear": 5.35373723465932,
+      "assigned": [
+        true,
+        true
+      ]
+    },
+    "stages": [
+      0,
+      0
+    ],
+    "settled": [
+      0,
+      0
+    ],
+    "blockedFor": [
+      0,
+      0
+    ],
+    "frontUnit": 1,
+    "available": [
+      true,
+      true
+    ],
+    "playerCovered": [
+      false,
+      false
+    ],
+    "nearby": [
+      true,
+      true
+    ],
+    "maneuvers": [
+      null,
+      null
+    ],
+    "planning": [
+      false,
+      false
+    ],
+    "approachProgress": [
+      null,
+      null
+    ],
+    "parkingGoal": [
+      null,
+      {
+        "x": -203.9981868376063,
+        "z": -56.455753326416016,
+        "yaw": 4.71238898038469
+      }
+    ],
+    "assigned": [
+      true,
+      true
+    ],
+    "parkingDirection": [
+      {
+        "stage": "wait",
+        "reverse": false
+      },
+      {
+        "stage": "0",
+        "reverse": false
+      }
+    ],
+    "parkingWait": 0,
+    "parkingAttempts": 0,
+    "shoulderAttempts": 0,
+    "maneuverAttempts": [
+      0,
+      0
+    ],
+    "planningSpent": [
+      0,
+      0
+    ],
+    "sceneStableFor": [
+      0,
+      0
+    ]
+  },
+  "cars": [
+    {
+      "x": -209.29083251953125,
+      "z": -56.45571517944336,
+      "pose": {
+        "y": -0.410054087638855,
+        "quaternion": {
+          "x": -0.0004736724340537957,
+          "y": -0.9328181093826518,
+          "z": 0.0012246337648698404,
+          "w": -0.3603451827267047
+        }
+      }
+    },
+    {
+      "x": -211.1951446533203,
+      "z": -58.04465866088867,
+      "pose": {
+        "y": -0.40994101762771606,
+        "quaternion": {
+          "x": 8.715199107179432e-11,
+          "y": -0.966215816958717,
+          "z": -5.014870130904301e-9,
+          "w": -0.25773434978442217
+        }
+      }
+    },
+    {
+      "x": -220.950927734375,
+      "z": -57.25864791870117,
+      "pose": {
+        "y": -0.4099408984184265,
+        "quaternion": {
+          "x": -5.2167241215919e-10,
+          "y": -0.897325191373829,
+          "z": 2.6855656909048147e-9,
+          "w": 0.44137002721743707
+        }
+      }
+    },
+    {
+      "x": -214.91493225097656,
+      "z": -61.80813980102539,
+      "pose": {
+        "y": -0.36078697443008423,
+        "quaternion": {
+          "x": -0.0034569629711245805,
+          "y": -0.9836863812093521,
+          "z": -0.019010262441502584,
+          "w": 0.17885123078181678
+        }
+      }
+    }
+  ]
+}

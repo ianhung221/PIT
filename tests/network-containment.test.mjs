@@ -1,14 +1,89 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {makeBlockade,stepBlockade,blockadeControl,waitForBlockadeRetry} from '../lib/supportContainment.ts';
+import {makeBlockade,stepBlockade,blockadeControl,waitForBlockadeRetry,controlsDeparture} from '../lib/supportContainment.ts';
 import {RAPIER,physicalWorld,physicsSnapshot} from './helpers/vehicle-world.mjs';
 import {installNetwork} from './helpers/network-world.mjs';
 import {driveVehicleTarget} from '../lib/vehicleDriver.ts';
 import {parkingRecoveryClear} from '../lib/parkingRecovery.ts';
-import {carBox,drivingFootprintOnRoad} from '../lib/drivingObservation.ts';
+import {carBox,drivingFootprintOnRoad,localIncidentFootprintClear} from '../lib/drivingObservation.ts';
 const network={version:1,seed:'CONTAIN',code:'NET1:CONTAIN',nodes:[{id:'a',x:0,z:100,radius:16},{id:'b',x:0,z:-300,radius:16}],edges:[{id:'ab',a:'a',b:'b',length:400,width:16,biome:'country'}],objects:[],towns:[],bounds:{minX:-100,maxX:100,minZ:-350,maxZ:150},spawn:{edge:'ab',from:'a',distance:50}};
 const road={network,segments:[],seed:'CONTAIN',code:'NET1:CONTAIN'};
 const car=(x,z)=>({x,z,yaw:0,speed:0,lateralSpeed:0});
+
+test('partial control requires intercepting an actual departure direction',()=>{
+ const suspect={...car(0,0),model:'suspect'};
+ assert.equal(controlsDeparture({...car(0,-6),model:'patrol'},suspect),true);
+ assert.equal(controlsDeparture({...car(6,0),model:'patrol'},suspect),false);
+ assert.equal(controlsDeparture({...car(0,-20),model:'patrol'},suspect),false);
+ assert.equal(controlsDeparture({...car(0,0),model:'patrol'},suspect),false);
+});
+
+test('lateral staging commits its driving direction instead of alternating pedals at the threshold',()=>{
+ const state=makeBlockade();state.phase='approaching';state.frontUnit=1;
+ state.anchor={x:0,z:0,yaw:0,index:0,side:-4.45,front:5.29,rear:5.35};
+ const target={...car(0,0),yaw:2.4},player=car(12,12);
+ // Small position noise across the old .25 m threshold used to reverse gear
+ // every step even though the vehicle still had four lateral metres to travel.
+ for(let i=0;i<120;i++){
+  const unit={...car(-8.45,7.75+(i%2?-.01:.01)),yaw:.43};
+  const result=blockadeControl(state,1,unit,target,[target,player],road,1/60,1);
+  assert.ok(result.speed>0,'keep the initial forward manoeuvre until its waypoint');
+ }
+});
+
+test('incident ground stays bounded and rejects real buildings, rails and map edges',()=>{
+ const incident=car(16,0),box=carBox({...incident,model:'patrol'},.35);
+ assert.equal(localIncidentFootprintClear(network,box,incident),true);
+ assert.equal(localIncidentFootprintClear(network,{...box,x:60},incident),false);
+ assert.equal(localIncidentFootprintClear(network,{...box,x:99},car(99,0)),false);
+ const building={...network,objects:[{id:'building',kind:'building',x:16,z:0,halfX:2,halfZ:3,height:3,color:'#000'}]};
+ assert.equal(localIncidentFootprintClear(building,box,incident),false);
+ const highway={...network,edges:network.edges.map(e=>({...e,biome:'highway'}))};
+ assert.equal(localIncidentFootprintClear(highway,{...box,x:8.2},incident),false);
+});
+
+test('nearby unit physically parks while a distant colleague remains en route',async t=>{
+ await RAPIER.init();
+ for(const near of [0,1])for(const offset of [-.15,0,.15]){
+  const sim=physicalWorld('suspect');try{
+   installNetwork(sim,network);const target=sim.vehicle;
+   const units=[sim.add('patrol',offset,near===0?-14:-100),sim.add('suv',offset,near===1?18:100)];
+   const state=makeBlockade();let settled=false,released=false,contacts=0;
+   for(let frame=0;frame<60*55;frame++){
+    const suspect=physicsSnapshot(target),supports=units.map(physicsSnapshot),player=car(-6,30);
+    stepBlockade(state,{road,index:0,suspect,supports,player,dt:1/60});
+    driveVehicleTarget(target,{speed:0,yawError:0},1);
+    for(let i=0;i<2;i++){
+     const output=blockadeControl(state,i,supports[i],suspect,[suspect,player,supports[1-i]],road,1/60,1);
+     if(i!==near)assert.equal(output,null,'far unit remains on road-routing control');
+     driveVehicleTarget(units[i],output??{speed:0,yawError:0},1);
+    }
+    sim.world.step();
+    for(let c=0;c<target.body.numColliders();c++)sim.world.contactPairsWith(target.body.collider(c),other=>{if(other.parent()?.handle===units[near].body.handle)contacts++;});
+    if(settled&&state.settled[near]<.1)released=true;
+    settled ||=state.settled[near]>.8;
+   }
+   t.diagnostic(JSON.stringify({near,offset,settled,released,contacts,phase:state.phase,positions:units.map(physicsSnapshot)}));
+   assert.equal(settled,true);assert.equal(released,false);assert.equal(contacts,0);
+   assert.equal(state.phase,'approaching','partial control is not full arrival');
+  }finally{sim.dispose();}
+ }
+});
+
+test('blocked front parking does not prevent physically controlling the rear',async()=>{
+ await RAPIER.init();const sim=physicalWorld('suspect');
+ try{
+  const n={...network,objects:[{id:'building',kind:'building',x:0,z:-6,halfX:8,halfZ:2,height:3,color:'#000'}]},r={...road,network:n};
+  installNetwork(sim,n);const rear=sim.add('suv',0,18),state=makeBlockade();
+  for(let frame=0;frame<60*55;frame++){
+   const suspect=physicsSnapshot(sim.vehicle),supports=[car(0,-14),physicsSnapshot(rear)],player=car(-6,30);
+   stepBlockade(state,{road:r,index:0,suspect,supports,player,dt:1/60});
+   const output=blockadeControl(state,1,supports[1],suspect,[suspect,player,supports[0]],r,1/60,1);
+   driveVehicleTarget(sim.vehicle,{speed:0,yawError:0},1);driveVehicleTarget(rear,output??{speed:0,yawError:0},1);sim.world.step();
+  }
+  assert.ok(state.settled[1]>.8);assert.equal(state.assigned[0],false);assert.equal(state.phase,'approaching');
+ }finally{sim.dispose();}
+});
 test('parking correction requires a clear road envelope and checks moving vehicles',()=>{
  const unit={...car(-3.9,-5.6),yaw:.56,model:'patrol'},anchor={x:0,z:0,yaw:0},target={...car(0,0),yaw:Math.PI,model:'suspect'};
  assert.equal(parkingRecoveryClear(road,anchor,unit,[target]),true);
@@ -29,16 +104,30 @@ test('temporarily blocked correction can be reconsidered but checks remain bound
  const setup=()=>{const state=makeBlockade();state.phase='approaching';state.anchor={x:0,z:0,yaw:0,index:0,side:-3.3,front:5.35,rear:5.3};state.stages=[3,0];return state;};
  const step=(state,neighbors)=>{for(let i=0;i<13;i++)blockadeControl(state,0,unit,suspect,neighbors,road,.1,1);};
  const state=setup();step(state,[suspect,obstacle]);assert.equal(state.parkingAttempts,1);assert.equal(state.parkingRecovery,undefined);
- step(state,[suspect]);assert.ok(state.parkingRecovery);assert.equal(state.parkingAttempts,5);
+ step(state,[suspect]);
+ assert.ok(state.parkingRecovery||state.parkingGoal?.[0],'cleared space permits correction or a swept replacement route');
+ if(state.parkingGoal?.[0])assert.equal(state.parkingRecovery,undefined,'replacement route owns control');
+ assert.ok(state.parkingAttempts<=5);
  const blocked=setup();for(let i=0;i<10;i++)step(blocked,[suspect,obstacle]);
- assert.equal(blocked.parkingAttempts,5);assert.equal(blocked.parkingRecovery,undefined);
+ assert.ok(blocked.parkingAttempts<=5);assert.equal(blocked.parkingRecovery,undefined);
+ assert.ok((blocked.maneuverAttempts?.[0]??0)<=2);
+ assert.ok((blocked.planningSpent?.[0]??0)<=15.1);
 });
 test('nearby backup waits during replan only while target is slow',()=>{
  const state=makeBlockade(),suspect=car(0,0),near=car(0,-10),far=car(0,-80);
  assert.equal(waitForBlockadeRetry(state,near,suspect),false);
  state.phase='missed';assert.equal(waitForBlockadeRetry(state,near,suspect),true);
  assert.equal(waitForBlockadeRetry(state,far,suspect),false);
+ assert.equal(waitForBlockadeRetry(state,car(0,37),suspect),false,'outer approach remains controlled by road routing');
  suspect.speed=8;assert.equal(waitForBlockadeRetry(state,near,suspect),false);
+});
+
+test('handoff does not activate a local manoeuvre outside its supported envelope',()=>{
+ const state=makeBlockade(),input={road,index:0,suspect:car(0,0),supports:[car(0,-37),car(0,18)],player:car(-6,30),dt:1/60};
+ for(let i=0;i<30;i++)stepBlockade(state,input);
+ assert.equal(state.phase,'approaching');
+ assert.equal(blockadeControl(state,0,input.supports[0],input.suspect,[],road,1/60,1),null);
+ assert.ok(blockadeControl(state,1,input.supports[1],input.suspect,[],road,1/60,1).speed>0);
 });
 test('network blockade selects the nearby front unit, holds roles, and waits for rotation',()=>{
  for(const frontUnit of [0,1]){
@@ -102,7 +191,7 @@ test('local shoulder parking still rejects real objects covering both stopping p
 });
 test('both model assignments physically approach and park around a braking, unlocked target',async t=>{
  await RAPIER.init();
- for(const frontUnit of [0,1])for(const grip of [1,.78,.58])for(const x of [0,8]){
+ for(const frontUnit of [0,1])for(const grip of [1,.78,.58])for(const x of [0,8,16]){
   const sim=physicalWorld('suspect');try{
    installNetwork(sim,network);const target=sim.vehicle;
    target.body.setTranslation({x,y:-.315,z:0},true);
