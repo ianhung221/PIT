@@ -59,7 +59,7 @@ export function HomeClient({networkEnabled=false}:{networkEnabled?:boolean}={}) 
       </div>
       <header className="topbar">
         <div className="brand-mark"><span>PIT</span> UNIT</div><div className="status"><i /> DISPATCH CONNECTED</div>
-        <div className="case-number">CASE 24-781<br /><strong>PRIORITY ONE</strong></div>
+        <div className="build-version">{process.env.NEXT_PUBLIC_BUILD_VERSION ?? "版本未知／本機開發"}</div>
       </header>
       <section className="hero-copy">
         <p className="eyebrow">TACTICAL INTERVENTION SIMULATOR</p><h1>終止<br /><em>追逐。</em></h1>
@@ -87,7 +87,7 @@ export function HomeClient({networkEnabled=false}:{networkEnabled?:boolean}={}) 
         <button className="deploy-button" type="button" disabled={mode==='mission'&&networkEnabled&&parsed?.kind!=='valid'} onClick={() => {const behaviorSeed=makeMissionSeed();setMission(mode==='mission'?{mode,config:{ scene, weather, time, vehicle, quality, difficulty, behaviorSeed,seed:parsed?.kind==='valid'?parsed.code:seed.trim()||makeMissionSeed(),...(networkEnabled?{mapMode:'network' as const,navigation}:{}) }}:{mode,config:{vehicle,quality,difficulty,behaviorSeed,speedKph:practiceSpeed,weather:practiceWeather}});}}><span>{mode==='mission'?'部署攔截單位':'進入練習場'}</span><small>ENTER TO DEPLOY</small><b>→</b></button>
         <p className="controls-hint"><kbd>↑</kbd><kbd>↓</kbd> 油門 / 煞車 · <kbd>←</kbd><kbd>→</kbd> 轉向 · {mode==='mission'?<><kbd>C</kbd> 視角 · <kbd>Q</kbd> 無線電</>:<><kbd>F</kbd> 巡航 · <kbd>P</kbd> 暫停</>}</p>
       </section>
-      <footer><span>PRECISION IMMOBILIZATION TRAINING SYSTEM</span><span>BUILD 0.2 // TRAINING USE</span></footer>
+      <footer><span>PRECISION IMMOBILIZATION TRAINING SYSTEM</span><span>TRAINING USE</span></footer>
     </main>
   );
 }
