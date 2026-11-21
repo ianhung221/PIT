@@ -25,6 +25,7 @@ export interface BlockadeState {
   available:[boolean,boolean];
   playerCovered:[boolean,boolean];
   playerAtAssignment?:Point;
+  targetHeadingAtAssignment?:number;
   frontDistance?:number;
   advancingFor?:number;
   // Per-unit feasibility is separate from vehicle health and actual arrival.
@@ -64,7 +65,7 @@ function extent(yaw: number, length: number, width: number) {
 function playerCoverage(suspect:CarSnapshot,player:CarSnapshot,yaw:number):[boolean,boolean]{
   const p=blockadeLocal({...suspect,yaw},player),box=carBox(player);
   const minimum=extent(player.yaw-yaw,box.halfZ*2,box.halfX*2).forward+extent(suspect.yaw-yaw,SUSPECT.length,SUSPECT.width).forward;
-  const aligned=Math.abs(Math.sin(player.yaw-yaw))<.25&&Math.abs(p.side)<.8&&planar(player)<.65;
+  const aligned=planar(player)<.65&&Math.abs(p.side)<box.halfZ+SUSPECT.width/2&&controlsDeparture(player,suspect);
   return [aligned&&p.forward-minimum>=0&&p.forward-minimum<1.5,aligned&&-p.forward-minimum>=0&&-p.forward-minimum<1.5];
 }
 
@@ -75,7 +76,7 @@ export function containmentPose(unit: 0 | 1, car: CarSnapshot, suspect: CarSnaps
   const minimumGap = extent(suspect.yaw - roadYaw, SUSPECT.length, SUSPECT.width).forward
     + extent(car.yaw - roadYaw, dimensions.length, dimensions.width).forward;
   const gap = (front ? local.forward : -local.forward) - minimumGap;
-  return gap >= .12 && gap <= 1.25 && Math.abs(local.side) < .8
+  return gap >= .12 && gap <= 1.25 && Math.abs(local.side) < .8 && controlsDeparture({...car,model:unit===0?'patrol':'suv'},suspect)
     && Math.abs(normalizeAngle(roadYaw - car.yaw)) < .25 && planar(car) < .65 && planar(suspect) < 1.2;
 }
 function inRoad(road: GeneratedRoad, point: Point, yaw: number, index: number, unit: number, incident?:Point) {
@@ -131,13 +132,10 @@ export function planBlockade(road: GeneratedRoad, index: number, suspect: CarSna
 
 /** Partial control only: intercepts a short straight departure, not enclosure. */
 export function controlsDeparture(car:DrivingCar,suspect:CarSnapshot){
- const obstacle=carBox(car);
- if(boxesOverlap(obstacle,carBox({...suspect,model:'suspect'})))return false;
- for(const direction of [1,-1])for(let distance=.1;distance<=4;distance+=.1){
-  const pose=pointAt(suspect,0,direction*distance);
-  if(boxesOverlap(obstacle,carBox({...suspect,...pose,model:'suspect'})))return true;
- }
- return false;
+ const obstacle=carBox(car),body=carBox({...suspect,model:'suspect'});
+ if(boxesOverlap(obstacle,body))return false;
+ // A rectangle translated along its own axis sweeps one longer rectangle.
+ return boxesOverlap(obstacle,{...body,halfZ:body.halfZ+4});
 }
 
 export function missBlockade(state: BlockadeState, reason: string) {
@@ -179,9 +177,10 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     let anchor = planBlockade(input.road, input.index, suspect, supports, input.player);
     state.frontUnit=0;
     if(input.road.network){
-      const roadYaw=locationSegment(input.road.network,locateRoad(input.road.network,suspect)).yaw;
+      const targetYaw=suspect.yaw;
       let cost=Infinity;anchor=null;
-      for(const frontUnit of [0,1] as const)for(const yaw of [roadYaw,roadYaw+Math.PI]){
+      const yaw=targetYaw;
+      for(const frontUnit of [0,1] as const){
         const covered=playerCoverage(suspect,input.player,yaw);
         if(!availability[frontUnit]&&!covered[0])continue;
         const candidate=planBlockade(input.road,input.index,suspect,supports,input.player,frontUnit,yaw,true);if(!candidate)continue;
@@ -210,6 +209,7 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     state.assigned=anchor.assigned;
     state.reason='';
     state.playerAtAssignment={x:input.player.x,z:input.player.z};
+    state.targetHeadingAtAssignment=suspect.yaw;
     state.frontDistance=undefined;state.advancingFor=0;
     state.anchor = anchor; state.phase = "approaching"; state.elapsed = 0;
     state.parkingDirection=[null,null];
@@ -220,6 +220,9 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     return;
   }
   if (!state.anchor) return;
+  if(input.road.network&&stable&&state.targetHeadingAtAssignment!==undefined&&Math.abs(normalizeAngle(suspect.yaw-state.targetHeadingAtAssignment))>.35){
+    missBlockade(state,'嫌犯朝向改變，重新確認守位');return;
+  }
   const lead=supports[state.frontUnit];
   const distance=Math.hypot(lead.x-suspect.x,lead.z-suspect.z);
   if(state.frontDistance===undefined||distance>state.frontDistance+.5)state.frontDistance=distance;
@@ -453,6 +456,8 @@ export function blockadeFeedback(state: BlockadeState): Pick<RadioFeedback, "pha
   if(state.reason&&state.maneuverAttempts?.some(attempts=>attempts>=2))
     return {phase:'unable',message:state.reason};
   const front=`0${state.frontUnit+2}`,rear=`0${3-state.frontUnit}`;
+  if(state.playerCovered[0])return {phase:'executing',message:`玩家已守車頭，${rear} 負責車尾`};
+  if(state.playerCovered[1])return {phase:'executing',message:`玩家已守車尾，${front} 負責車頭`};
   if((state.advancingFor??0)>0)return {phase:'executing',message:`${front} 正在接近嫌犯`};
   return { phase: "executing", message: state.stages[state.frontUnit] < 2 ? `已分派 ${front} 先行，${rear} 讓行` : `已分派 ${front} 停車，另一方向待確認` };
 }

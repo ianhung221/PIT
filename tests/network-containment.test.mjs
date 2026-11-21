@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {makeBlockade,stepBlockade,blockadeControl,waitForBlockadeRetry,controlsDeparture} from '../lib/supportContainment.ts';
+import {makeBlockade,stepBlockade,blockadeControl,waitForBlockadeRetry,controlsDeparture,containmentPose} from '../lib/supportContainment.ts';
 import {RAPIER,physicalWorld,physicsSnapshot} from './helpers/vehicle-world.mjs';
 import {installNetwork} from './helpers/network-world.mjs';
 import {driveVehicleTarget} from '../lib/vehicleDriver.ts';
@@ -12,6 +12,70 @@ import {carBox,drivingFootprintOnRoad,localIncidentFootprintClear} from '../lib/
 const network={version:1,seed:'CONTAIN',code:'NET1:CONTAIN',nodes:[{id:'a',x:0,z:100,radius:16},{id:'b',x:0,z:-300,radius:16}],edges:[{id:'ab',a:'a',b:'b',length:400,width:16,biome:'country'}],objects:[],towns:[],bounds:{minX:-100,maxX:100,minZ:-350,maxZ:150},spawn:{edge:'ab',from:'a',distance:50}};
 const road={network,segments:[],seed:'CONTAIN',code:'NET1:CONTAIN'};
 const car=(x,z)=>({x,z,yaw:0,speed:0,lateralSpeed:0});
+
+test('a road-aligned stopping position must cover an actual end of the target',()=>{
+ for(const [angle,distance,expected] of [[0,5,true],[Math.PI/4,5,false],[Math.PI/2,4,false]]){
+  const suspect={...car(0,0),yaw:angle};
+  assert.equal(containmentPose(0,car(0,-distance),suspect,0),expected);
+ }
+});
+
+test('849B: the free support parks at the opposite end of a rotated target',async t=>{
+ await RAPIER.init();
+ const map=generateNetwork('NET1:PIT-20261121-849B');
+ const origin=map.nodes.find(node=>node.id===map.spawn.from);
+ const road={network:map,segments:[],seed:map.seed,code:map.code};
+ for(const [yaw,playerEnd,side,grip] of [[Math.PI/4,1,14,1],[Math.PI/2,-1,0,1],[Math.PI/4,1,14,.78]]){
+  const sim=physicalWorld('suspect');
+  try{
+   installNetwork(sim,map);
+   const point=d=>({x:origin.x+500-Math.sin(yaw)*d,z:origin.z+side-Math.cos(yaw)*d});
+   const setup=(vehicle,d,model,angle)=>{
+    vehicle.body.setTranslation({...point(d),y:vehicleSpawnHeight(model,0)},true);
+    vehicle.body.setRotation({x:0,y:Math.sin(angle/2),z:0,w:Math.cos(angle/2)},true);
+   };
+   const unit=sim.add('patrol'),playerCar=sim.add('patrol');
+   setup(sim.vehicle,0,'suspect',yaw);setup(playerCar,playerEnd*4.2,'patrol',yaw+Math.PI/2);
+   setup(unit,-playerEnd*17,'patrol',yaw);
+   const state=makeBlockade(),times={start:null,near:null,held:null};
+   let contacts=0;
+   for(let frame=0;frame<1800;frame++){
+    const suspect=physicsSnapshot(sim.vehicle),player=physicsSnapshot(playerCar),self=physicsSnapshot(unit);
+    const supports=[self,{...car(0,0),...point(90)}];
+    stepBlockade(state,{road,index:0,suspect,player,supports,available:[true,false],dt:1/60});
+    const control=blockadeControl(state,0,self,suspect,[player,suspect],road,1/60,grip);
+    driveVehicleTarget(unit,control??{speed:0,yawError:0},grip);
+    for(const vehicle of [playerCar,sim.vehicle])driveVehicleTarget(vehicle,{speed:0,yawError:0},grip);
+    sim.world.step();
+    for(let i=0;i<unit.body.numColliders();i++)sim.world.contactPairsWith(unit.body.collider(i),other=>{
+     if([playerCar.body.handle,sim.vehicle.body.handle].includes(other.parent()?.handle)){
+      sim.world.contactPair(unit.body.collider(i),other,manifold=>{
+       for(let j=0;j<manifold.numContacts();j++)if(manifold.contactImpulse(j)>0)contacts++;
+      });
+     }
+    });
+    if(Math.abs(self.speed)>.2)times.start??=frame/60;
+    if(Math.hypot(self.x-suspect.x,self.z-suspect.z)<8)times.near??=frame/60;
+    if(state.settled[0]>.8){times.held=frame/60;break;}
+   }
+   t.diagnostic(JSON.stringify({yaw,playerEnd,side,grip,times,reason:state.reason}));
+   assert.ok(times.held!==null);
+   assert.equal(state.playerCovered[playerEnd===1?0:1],true);
+   assert.equal(state.frontUnit===0,playerEnd===-1);
+   assert.equal(contacts,0);
+   const suspect=physicsSnapshot(sim.vehicle),self=physicsSnapshot(unit);
+   const along=-(self.x-suspect.x)*Math.sin(suspect.yaw)-(self.z-suspect.z)*Math.cos(suspect.yaw);
+   assert.equal(Math.sign(along),-playerEnd);
+   assert.ok(controlsDeparture(self,suspect));
+   const input={road,index:0,suspect,supports:[self,{...car(0,0),...point(90)}],available:[true,false],dt:1/60};
+   const turned=structuredClone(state);
+   stepBlockade(turned,{...input,suspect:{...suspect,yaw:suspect.yaw+.6},player:physicsSnapshot(playerCar)});
+   assert.equal(turned.phase,'missed');
+   stepBlockade(state,{...input,player:{...car(0,0),...point(40)}});
+   assert.equal(state.phase,'missed');
+  }finally{sim.dispose();}
+ }
+});
 
 test('8472: a support advances beyond the former queue when the player leaves room',async t=>{
  await RAPIER.init();
