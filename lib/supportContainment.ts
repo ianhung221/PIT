@@ -24,6 +24,9 @@ export interface BlockadeState {
   frontUnit:0|1;
   available:[boolean,boolean];
   playerCovered:[boolean,boolean];
+  playerAtAssignment?:Point;
+  frontDistance?:number;
+  advancingFor?:number;
   // Per-unit feasibility is separate from vehicle health and actual arrival.
   assigned?:[boolean,boolean];
   nearby?:[boolean,boolean];
@@ -184,6 +187,16 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
         const candidate=planBlockade(input.road,input.index,suspect,supports,input.player,frontUnit,yaw,true);if(!candidate)continue;
         if(!candidate.assigned.some((assigned,i)=>assigned&&state.nearby![i]&&!covered[i===frontUnit?0:1]))continue;
         let score=availability[1-frontUnit]||covered[1]?0:1000;
+        // Penalize a queue order that asks the trailing car to pass its waiting partner.
+        const lead=supports[frontUnit],peer=supports[1-frontUnit];
+        const destination=pointAt(candidate,0,candidate.front);
+        const dx=destination.x-lead.x,dz=destination.z-lead.z;
+        const length=Math.hypot(dx,dz);
+        if(length>0&&availability[1-frontUnit]&&!covered[0]){
+          const px=peer.x-lead.x,pz=peer.z-lead.z;
+          const along=(px*dx+pz*dz)/length;
+          if(along>0&&along<length&&Math.abs(px*dz-pz*dx)/length<3)score+=length;
+        }
         for(let unit=0;unit<2;unit++)if(availability[unit]&&!covered[unit===frontUnit?0:1]){
           if(!candidate.assigned[unit]){score+=500;continue;}
           const car=supports[unit],local=blockadeLocal(candidate,car),target=unit===frontUnit?candidate.front:-candidate.rear;
@@ -195,6 +208,9 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     }
     if (!anchor) { missBlockade(state, "沒有安全進場通道"); return; }
     state.assigned=anchor.assigned;
+    state.reason='';
+    state.playerAtAssignment={x:input.player.x,z:input.player.z};
+    state.frontDistance=undefined;state.advancingFor=0;
     state.anchor = anchor; state.phase = "approaching"; state.elapsed = 0;
     state.parkingDirection=[null,null];
     state.playerCovered=playerCoverage(suspect,input.player,anchor.yaw);
@@ -204,6 +220,18 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     return;
   }
   if (!state.anchor) return;
+  const lead=supports[state.frontUnit];
+  const distance=Math.hypot(lead.x-suspect.x,lead.z-suspect.z);
+  if(state.frontDistance===undefined||distance>state.frontDistance+.5)state.frontDistance=distance;
+  if(distance<state.frontDistance-.5){
+    state.frontDistance=distance;state.advancingFor=.8;
+  }else state.advancingFor=Math.max(0,(state.advancingFor??0)-dt);
+  const previousPlayer=state.playerAtAssignment;
+  if(previousPlayer&&state.maneuverAttempts?.some(n=>n>=2)&&!state.settled.some(t=>t>.8)
+    &&Math.hypot(input.player.x-previousPlayer.x,input.player.z-previousPlayer.z)>4){
+    state.failedParkingGoals=[[],[]];state.maneuverAttempts=[0,0];state.planningSpent=[0,0];
+    missBlockade(state,'玩家已移開，重新確認通道');return;
+  }
   const covered=playerCoverage(suspect,input.player,state.anchor.yaw);
   if(covered.some((c,i)=>c!==state.playerCovered[i])){missBlockade(state,'玩家守位改變，重新分工');return;}
   if (state.fastFor > .65 || Math.hypot(suspect.x - state.anchor.x, suspect.z - state.anchor.z) > 7) {
@@ -422,6 +450,9 @@ export function blockadeFeedback(state: BlockadeState): Pick<RadioFeedback, "pha
   if (state.phase === "holding") return { phase: "completed", message: "可用單位已就位，持續守位；仍須確認所有出口是否受控" };
   const guarding=state.settled.findIndex((t,i)=>state.available[i]&&t>.8);
   if(guarding>=0)return {phase:'executing',message:`0${guarding+2} 已控制一個方向；其他出口尚待補位，不代表完成攔停`};
+  if(state.reason&&state.maneuverAttempts?.some(attempts=>attempts>=2))
+    return {phase:'unable',message:state.reason};
   const front=`0${state.frontUnit+2}`,rear=`0${3-state.frontUnit}`;
-  return { phase: "executing", message: state.stages[state.frontUnit] < 2 ? `${front} 沿安全側進場，${rear} 保留通道` : `${front} 前封停車中，另一方向正在補位` };
+  if((state.advancingFor??0)>0)return {phase:'executing',message:`${front} 正在接近嫌犯`};
+  return { phase: "executing", message: state.stages[state.frontUnit] < 2 ? `已分派 ${front} 先行，${rear} 讓行` : `已分派 ${front} 停車，另一方向待確認` };
 }

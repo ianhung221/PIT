@@ -5,10 +5,68 @@ import {RAPIER,physicalWorld,physicsSnapshot} from './helpers/vehicle-world.mjs'
 import {installNetwork} from './helpers/network-world.mjs';
 import {driveVehicleTarget} from '../lib/vehicleDriver.ts';
 import {parkingRecoveryClear} from '../lib/parkingRecovery.ts';
+import {generateNetwork} from '../lib/networkGenerator.ts';
+import {chaseRoute,makeNetworkDriver} from '../lib/networkPursuit.ts';
+import {vehicleSpawnHeight} from '../lib/vehiclePhysicsConfig.ts';
 import {carBox,drivingFootprintOnRoad,localIncidentFootprintClear} from '../lib/drivingObservation.ts';
 const network={version:1,seed:'CONTAIN',code:'NET1:CONTAIN',nodes:[{id:'a',x:0,z:100,radius:16},{id:'b',x:0,z:-300,radius:16}],edges:[{id:'ab',a:'a',b:'b',length:400,width:16,biome:'country'}],objects:[],towns:[],bounds:{minX:-100,maxX:100,minZ:-350,maxZ:150},spawn:{edge:'ab',from:'a',distance:50}};
 const road={network,segments:[],seed:'CONTAIN',code:'NET1:CONTAIN'};
 const car=(x,z)=>({x,z,yaw:0,speed:0,lateralSpeed:0});
+
+test('8472: a support advances beyond the former queue when the player leaves room',async t=>{
+ await RAPIER.init();
+ const map=generateNetwork('NET1:PIT-20261120-8472');
+ const origin=map.nodes.find(node=>node.id===map.spawn.from);
+ const incidentRoad={network:map,segments:[],seed:map.seed,code:map.code};
+ for(const scenario of ['blocked','clear','player-leaves','swapped']){
+  const offset=scenario==='clear'||scenario==='swapped'?7:0;
+  const sim=physicalWorld('suspect');
+  try{
+   installNetwork(sim,map);
+   const models=['suspect','patrol','patrol','suv'];
+   const vehicles=[sim.vehicle,...models.slice(1).map(model=>sim.add(model))];
+   const startX=origin.x+500;
+   vehicles.forEach((vehicle,i)=>{
+    const positions=scenario==='swapped'?[0,-12,-29,-17]:[0,-12,-17,-29];
+    vehicle.body.setTranslation({x:startX+positions[i],y:vehicleSpawnHeight(models[i],0),z:origin.z+2.7+(i===1?offset:0)},true);
+    vehicle.body.setRotation({x:0,y:-Math.SQRT1_2,z:0,w:Math.SQRT1_2},true);
+   });
+   const state=makeBlockade(),drivers=['02','03'].map(id=>makeNetworkDriver(map.code+'-'+id));
+   const samples=[];
+   const duration=scenario==='player-leaves'?1800:900;
+   for(let frame=0;frame<duration;frame++){
+    // Change only the player fixture. Both support cars always use wheel physics.
+    if(scenario==='player-leaves'&&frame===900){
+     const pos=vehicles[1].body.translation();
+     vehicles[1].body.setTranslation({...pos,z:pos.z+7},true);
+    }
+    const [suspect,player,...supports]=vehicles.map((vehicle,i)=>({...physicsSnapshot(vehicle),model:models[i]}));
+    stepBlockade(state,{road:incidentRoad,index:0,suspect,player,supports,dt:1/60});
+    vehicles.slice(0,2).forEach(vehicle=>driveVehicleTarget(vehicle,{speed:0,yawError:0}));
+    supports.forEach((unit,i)=>{
+     const neighbors=[{...player,id:'player'},{...suspect,id:'suspect'},{...supports[1-i],id:'other'}];
+     const route=chaseRoute(map,drivers[i],unit,suspect,frame/60,1,16+6*i,neighbors,false,false);
+     const local=blockadeControl(state,i,unit,suspect,neighbors,incidentRoad,1/60,1);
+     const fallback=waitForBlockadeRetry(state,unit,suspect)?{...route,speed:0}:route;
+     driveVehicleTarget(vehicles[i+2],drivers[i].turnaroundStopping?route:local??fallback);
+    });
+    sim.world.step();
+    if(frame%300===299)samples.push(vehicles.slice(2).map(v=>Math.round((v.body.translation().x-startX)*10)/10));
+   }
+   t.diagnostic(JSON.stringify({scenario,samples,reason:state.reason}));
+   if(scenario==='blocked')assert.match(state.reason,/空間|受阻/);
+   else assert.ok(samples.at(-1).some(x=>x>-9),'at least one unit advances beyond the old waiting position toward the incident');
+  }finally{sim.dispose();}
+ }
+});
+
+test('an unavailable incident area cannot produce a ready report',()=>{
+ const blockedRoad={...road,network:{...network,objects:[{id:'building',kind:'building',x:0,z:0,halfX:18,halfZ:18,height:5,color:'#000'}]}};
+ const state=makeBlockade(),suspect=car(0,0),player=car(12,25),supports=[car(0,22),car(0,24)];
+ for(let frame=0;frame<900;frame++)stepBlockade(state,{road:blockedRoad,index:0,suspect,player,supports,dt:1/60});
+ assert.equal(state.phase,'missed');
+ assert.deepEqual(state.settled,[0,0]);assert.match(state.reason,/通道/);
+});
 
 test('partial control requires intercepting an actual departure direction',()=>{
  const suspect={...car(0,0),model:'suspect'};

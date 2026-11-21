@@ -38,6 +38,9 @@ export async function verifyNetworkControls({evaluate,command,delay,capture}){
  // Q1 must not cancel an explicitly armed Q4. Q6 then stops this mission.
  const radio=async label=>{await evaluate('document.querySelector(".radio-trigger").click()');await delay(100);await evaluate(`([...document.querySelectorAll('.radio-wheel>button')].find(b=>b.textContent.includes(${JSON.stringify(label)}))).click()`);await delay(200);};
  await radio('協助封鎖嫌犯');
+ await radio('準備執行 PIT');
+ assert.equal(await evaluate('window.__pitInspect().runtime.tacticalCommand'),'prepare-pit');
+ await radio('協助封鎖嫌犯');
  const beforeQ1=await evaluate('window.__pitInspect().runtime.commandAt');
  await radio('請求 PIT 授權');
  assert.equal(await evaluate('window.__pitInspect().runtime.tacticalCommand'),'block-front');
