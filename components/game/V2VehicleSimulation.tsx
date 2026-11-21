@@ -419,7 +419,13 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         if(!targetLocation){targetLocation=locateRoad(network,target);targetLocations.set(target,targetLocation);}
         const routeControl=chaseRoute(network,driver,{...car,model:unit===0?'patrol':'suv'},target,state.elapsed,grip,activeBlockade?16+unit*6:slot.gap,neighbors,slot.allowOvertake,!activeBlockade&&slot.target===currentSuspect,targetLocation);
         if(driver.turnaroundReason&&driver.turnaroundReason!==previousTurnNotice)logRuntimeEvent(state,`0${unit+2} 後援：${driver.turnaroundReason}`);
-        const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?timed('blockadeControl',()=>blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip)):null;
+        const touchingTarget=()=>{
+          let touching=false;
+          for(let i=0;i<body.numColliders()&&!touching;i++)for(let j=0;j<suspect.numColliders()&&!touching;j++)
+            world.contactPair(body.collider(i),suspect.collider(j),m=>{if(m.numSolverContacts()>0)touching=true;});
+          return touching;
+        };
+        const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?timed('blockadeControl',()=>blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip,touchingTarget)):null;
         const control=driver.turnaroundStopping?routeControl:maneuver??(activeBlockade&&waitForBlockadeRetry(state.blockade,car,currentSuspect)
           ?{...routeControl,speed:0,arrived:false}:routeControl);
         driveSupport(body,control.yawError,control.speed,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);

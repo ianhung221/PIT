@@ -5,6 +5,9 @@ import {RAPIER,physicalWorld,physicsSnapshot} from './helpers/vehicle-world.mjs'
 import {installNetwork} from './helpers/network-world.mjs';
 import {driveVehicleTarget} from '../lib/vehicleDriver.ts';
 import {parkingRecoveryClear} from '../lib/parkingRecovery.ts';
+import {makeDamageEpisodes,sampleCollisionDamage} from '../lib/vehicleCollisionDamage.ts';
+import {pristineDamage} from '../lib/vehicleDamage.ts';
+import {readVehicleFrame} from '../lib/vehiclePose.ts';
 import {generateNetwork} from '../lib/networkGenerator.ts';
 import {chaseRoute,makeNetworkDriver} from '../lib/networkPursuit.ts';
 import {vehicleSpawnHeight} from '../lib/vehiclePhysicsConfig.ts';
@@ -22,10 +25,10 @@ test('a road-aligned stopping position must cover an actual end of the target',(
 
 test('849B: the free support parks at the opposite end of a rotated target',async t=>{
  await RAPIER.init();
- const map=generateNetwork('NET1:PIT-20261121-849B');
- const origin=map.nodes.find(node=>node.id===map.spawn.from);
- const road={network:map,segments:[],seed:map.seed,code:map.code};
- for(const [yaw,playerEnd,side,grip] of [[Math.PI/4,1,14,1],[Math.PI/2,-1,0,1],[Math.PI/4,1,14,.78]]){
+ for(const [yaw,playerEnd,side,grip,contact] of [[Math.PI/4,1,14,1],[Math.PI/2,-1,0,1],[Math.PI/4,1,14,.78],[-Math.PI/2,1,0,1,true],[-Math.PI/2,-1,0,1,true],[-Math.PI/2,1,0,.78,true]]){
+  const map=generateNetwork(contact?'NET1:PIT-20261121-BE8F':'NET1:PIT-20261121-849B');
+  const origin=map.nodes.find(node=>node.id===map.spawn.from);
+  const road={network:map,segments:[],seed:map.seed,code:map.code};
   const sim=physicalWorld('suspect');
   try{
    installNetwork(sim,map);
@@ -39,14 +42,35 @@ test('849B: the free support parks at the opposite end of a rotated target',asyn
    setup(unit,-playerEnd*17,'patrol',yaw);
    const state=makeBlockade(),times={start:null,near:null,held:null};
    let contacts=0;
+   let contactPosition=null,firstContact=null,maxTargetShift=0,contactEpisodes=0,lastHit=false;
+   const damageEpisodes=makeDamageEpisodes(),actors=[playerCar,sim.vehicle,unit];
+   let damage=actors.map(()=>pristineDamage());
    for(let frame=0;frame<1800;frame++){
     const suspect=physicsSnapshot(sim.vehicle),player=physicsSnapshot(playerCar),self=physicsSnapshot(unit);
     const supports=[self,{...car(0,0),...point(90)}];
     stepBlockade(state,{road,index:0,suspect,player,supports,available:[true,false],dt:1/60});
-    const control=blockadeControl(state,0,self,suspect,[player,suspect],road,1/60,grip);
-    driveVehicleTarget(unit,control??{speed:0,yawError:0},grip);
+    const touching=()=>{
+     let hit=false;
+     for(let i=0;i<unit.body.numColliders();i++)for(let j=0;j<sim.vehicle.body.numColliders();j++)
+      sim.world.contactPair(unit.body.collider(i),sim.vehicle.body.collider(j),m=>{if(m.numSolverContacts()>0)hit=true;});
+     if(hit){
+      if(!lastHit)contactEpisodes++;
+      firstContact??=frame/60;contactPosition??={x:suspect.x,z:suspect.z};
+     }
+     lastHit=hit;
+     return hit;
+    };
+    const control=blockadeControl(state,0,self,suspect,[player,suspect],road,1/60,grip,contact?touching:undefined);
+    const before=contact?actors.map(v=>readVehicleFrame(v.body,v.lastYaw)):[];
+    const pedals=driveVehicleTarget(unit,control??{speed:0,yawError:0},grip,damage[2]);
+    if(contactPosition){
+     assert.equal(pedals.throttle,0);assert.ok(pedals.brake>0);
+     maxTargetShift=Math.max(maxTargetShift,Math.hypot(suspect.x-contactPosition.x,suspect.z-contactPosition.z));
+     assert.ok(maxTargetShift<.2);
+    }
     for(const vehicle of [playerCar,sim.vehicle])driveVehicleTarget(vehicle,{speed:0,yawError:0},grip);
     sim.world.step();
+    if(contact)damage=sampleCollisionDamage(sim.world,actors.map((v,i)=>({body:v.body,kind:i===1?'suspect':'patrol',damage:damage[i],before:before[i]})),damageEpisodes,frame/60);
     for(let i=0;i<unit.body.numColliders();i++)sim.world.contactPairsWith(unit.body.collider(i),other=>{
      if([playerCar.body.handle,sim.vehicle.body.handle].includes(other.parent()?.handle)){
       sim.world.contactPair(unit.body.collider(i),other,manifold=>{
@@ -56,17 +80,27 @@ test('849B: the free support parks at the opposite end of a rotated target',asyn
     });
     if(Math.abs(self.speed)>.2)times.start??=frame/60;
     if(Math.hypot(self.x-suspect.x,self.z-suspect.z)<8)times.near??=frame/60;
-    if(state.settled[0]>.8){times.held=frame/60;break;}
+    if(state.settled[0]>.8){times.held??=frame/60;if(!contact||frame/60-times.held>3)break;}
    }
-   t.diagnostic(JSON.stringify({yaw,playerEnd,side,grip,times,reason:state.reason}));
+   t.diagnostic(JSON.stringify({yaw,playerEnd,side,grip,times,firstContact,maxTargetShift,contactEpisodes,reason:state.reason}));
    assert.ok(times.held!==null);
    assert.equal(state.playerCovered[playerEnd===1?0:1],true);
    assert.equal(state.frontUnit===0,playerEnd===-1);
-   assert.equal(contacts,0);
+   if(contact){
+    assert.ok(contactPosition&&state.settled[0]>3);
+    assert.equal(contactEpisodes,1);
+    assert.deepEqual(damage,actors.map(()=>pristineDamage()));
+   }
+   else assert.equal(contacts,0);
    const suspect=physicsSnapshot(sim.vehicle),self=physicsSnapshot(unit);
    const along=-(self.x-suspect.x)*Math.sin(suspect.yaw)-(self.z-suspect.z)*Math.cos(suspect.yaw);
    assert.equal(Math.sign(along),-playerEnd);
-   assert.ok(controlsDeparture(self,suspect));
+   if(contact){
+    const moved={...suspect,x:suspect.x-Math.sign(along)*.55*(-Math.sin(yaw)),z:suspect.z-Math.sign(along)*.55*(-Math.cos(yaw))};
+    const reopened=blockadeControl(structuredClone(state),0,self,moved,[physicsSnapshot(playerCar),moved],road,1/60,grip,()=>false);
+    assert.ok(Math.abs(reopened.speed)>0,'resume only after a meaningful gap opens');
+   }
+   if(!contact)assert.ok(controlsDeparture(self,suspect));
    const input={road,index:0,suspect,supports:[self,{...car(0,0),...point(90)}],available:[true,false],dt:1/60};
    const turned=structuredClone(state);
    stepBlockade(turned,{...input,suspect:{...suspect,yaw:suspect.yaw+.6},player:physicsSnapshot(playerCar)});

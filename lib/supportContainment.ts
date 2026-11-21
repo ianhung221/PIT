@@ -25,6 +25,7 @@ export interface BlockadeState {
   available:[boolean,boolean];
   playerCovered:[boolean,boolean];
   playerAtAssignment?:Point;
+  contactHold?:[Point|null,Point|null];
   targetHeadingAtAssignment?:number;
   frontDistance?:number;
   advancingFor?:number;
@@ -209,6 +210,7 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     state.assigned=anchor.assigned;
     state.reason='';
     state.playerAtAssignment={x:input.player.x,z:input.player.z};
+    state.contactHold=[null,null];
     state.targetHeadingAtAssignment=suspect.yaw;
     state.frontDistance=undefined;state.advancingFor=0;
     state.anchor = anchor; state.phase = "approaching"; state.elapsed = 0;
@@ -260,7 +262,7 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
 }
 
 /** Low-speed local manoeuvre; ordinary road pursuit and wall recovery remain separate. */
-export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnapshot, suspect: CarSnapshot, neighbors: CarSnapshot[], road: GeneratedRoad, dt: number, grip: number) {
+export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnapshot, suspect: CarSnapshot, neighbors: CarSnapshot[], road: GeneratedRoad, dt: number, grip: number, touchingTarget?:()=>boolean) {
   const a = state.anchor;
   if (!a || !state.available[unit] || (state.phase !== "approaching" && state.phase !== "holding")) return null;
   if(state.assigned?.[unit]===false)return {speed:0,yawError:0,arrived:false,modeChanged:false};
@@ -268,6 +270,34 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
   const frontUnit=state.frontUnit,front=unit===frontUnit;
   if(state.playerCovered[front?0:1])return {speed:0,yawError:0,arrived:false,modeChanged:false};
   const local = blockadeLocal(a, car);
+  if(road.network&&touchingTarget&&planar(suspect)<.6){
+    const pose=blockadeLocal(suspect,car);
+    const clearance=Math.abs(pose.forward)-(SUSPECT.length+VEHICLES[unit===0?'patrol':'suv'].length)/2;
+    const aligned=(front?pose.forward>0:pose.forward<0)&&Math.abs(pose.side)<.45&&Math.abs(normalizeAngle(car.yaw-suspect.yaw))<.12;
+    const previous=state.contactHold?.[unit];
+    const obstructed=neighbors.some(other=>other!==suspect&&(other as DrivingCar).id!=='suspect'&&(other as DrivingCar).model!=='suspect'&&Math.hypot(other.x-car.x,other.z-car.z)<6);
+    if(aligned&&clearance<1.3&&clearance>-.5&&!obstructed){
+      state.contactHold??=[null,null];
+      if(touchingTarget())state.contactHold[unit]={x:pose.side,z:pose.forward};
+      else if(previous&&Math.hypot(pose.side-previous.x,pose.forward-previous.z)>.3)state.contactHold[unit]=null;
+      if(state.contactHold[unit]){
+        state.settled[unit]=planar(car)<.25?state.settled[unit]+dt:0;
+        if(front)state.stages[unit]=3;
+        return {speed:0,yawError:0,arrived:state.settled[unit]>.8,modeChanged:false};
+      }
+      state.settled[unit]=0;
+      const path=carBox({...car,model:unit===0?'patrol':'suv'});
+      const travel=Math.max(0,clearance)+.15;
+      const center=pointAt(car,0,(front?-1:1)*travel/2);
+      if(!localIncidentFootprintClear(road.network,{...path,...center,halfZ:path.halfZ+travel/2},a)){
+        state.blockedFor[unit]+=dt;
+        return {speed:0,yawError:0,arrived:false,modeChanged:false};
+      }
+      return {speed:(front?-1:1)*.35*Math.min(1,grip),yawError:0,arrived:false,modeChanged:false};
+    }
+    if(state.contactHold)state.contactHold[unit]=null;
+    if(front&&aligned&&pose.forward>a.front&&state.stages[unit]===2)state.stages[unit]=3;
+  }
   const model=unit===0?'patrol':'suv';
   const network=road.network,drivingCar={...car,model} as DrivingCar;
   if(front&&!state.parkingGoal?.[unit]&&state.stages[unit]===2&&network&&!state.shoulderRecovery&&!state.shoulderAttempts&&state.blockedFor[unit]>1&&planar(car)<.5&&!drivingFootprintOnRoad(network,carBox(drivingCar,.2))){
