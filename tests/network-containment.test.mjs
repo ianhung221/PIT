@@ -16,6 +16,48 @@ const network={version:1,seed:'CONTAIN',code:'NET1:CONTAIN',nodes:[{id:'a',x:0,z
 const road={network,segments:[],seed:'CONTAIN',code:'NET1:CONTAIN'};
 const car=(x,z)=>({x,z,yaw:0,speed:0,lateralSpeed:0});
 
+test('7286: approaching from the adjacent road reaches a usable parking position',async t=>{
+ await RAPIER.init();
+ const map=generateNetwork('NET1:PIT-20261121-7286'),origin=map.nodes.find(n=>n.id===map.spawn.from);
+ const road={network:map,segments:[],seed:map.seed,code:map.code};
+ for(const offset of [16,21,-21]){
+  const sim=physicalWorld('suspect');
+  try{
+   installNetwork(sim,map);
+   const x=origin.x+500,z=origin.z+offset,unit=sim.add('patrol'),player=sim.add('patrol');
+   const place=(v,kind,atZ,yaw)=>{
+    v.body.setTranslation({x,y:vehicleSpawnHeight(kind,0),z:atZ},true);
+    v.body.setRotation({x:0,y:Math.sin(yaw/2),z:0,w:Math.cos(yaw/2)},true);
+   };
+   const sign=Math.sign(offset);
+   place(sim.vehicle,'suspect',z,sign===1?0:Math.PI);place(player,'patrol',z+sign*4.2,Math.PI/2);place(unit,'patrol',origin.z+sign*2.7,-sign*Math.PI/2);
+   const state=makeBlockade(),driver=makeNetworkDriver('7286');
+   let held=null,off=null,start=null,near=null;
+   for(let f=0;f<1800;f++){
+    const target=physicsSnapshot(sim.vehicle),p=physicsSnapshot(player),self=physicsSnapshot(unit);
+    stepBlockade(state,{road,index:0,suspect:target,player:p,supports:[self,car(x,z-90)],available:[true,false],dt:1/60});
+    const neighbors=[p,target];
+    const touching=()=>{
+     let hit=false;
+     for(let i=0;i<unit.body.numColliders();i++)for(let j=0;j<sim.vehicle.body.numColliders();j++)
+      sim.world.contactPair(unit.body.collider(i),sim.vehicle.body.collider(j),m=>{if(m.numSolverContacts())hit=true;});
+     return hit;
+    };
+    const control=blockadeControl(state,0,self,target,neighbors,road,1/60,1,touching)??chaseRoute(map,driver,self,target,f/60,1,16,neighbors,false,false);
+    driveVehicleTarget(unit,control);
+    for(const v of [player,sim.vehicle])driveVehicleTarget(v,{speed:0,yawError:0});
+    sim.world.step();
+    if(Math.abs(self.speed)>.2)start??=f/60;
+    if(sign*(self.z-origin.z)>6)off??=f/60;
+    if(Math.hypot(self.x-target.x,self.z-target.z)<8)near??=f/60;
+    if(state.settled[0]>.8&&sign*(self.z-target.z)<0&&(controlsDeparture(self,target)||touching())){held=f/60;break;}
+   }
+   t.diagnostic(JSON.stringify({offset,start,off,near,held,reason:state.reason}));
+   assert.ok(held!==null&&held<(offset===16?17.98:30));
+  }finally{sim.dispose();}
+ }
+});
+
 test('a road-aligned stopping position must cover an actual end of the target',()=>{
  for(const [angle,distance,expected] of [[0,5,true],[Math.PI/4,5,false],[Math.PI/2,4,false]]){
   const suspect={...car(0,0),yaw:angle};

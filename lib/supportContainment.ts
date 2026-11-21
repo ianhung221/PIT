@@ -371,10 +371,20 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
     // the clearance needed to begin a swept manoeuvre.
     if(!isAtSlot)state.settled[unit]=0;
     const goalBlocked=neighbors.some(c=>boxesOverlap(carBox({...drivingCar,...goal},.35),carBox(c as DrivingCar,.2)));
+    const crosswise=Math.abs(Math.sin(car.yaw-a.yaw))>.6;
+    const sideEntry=crosswise&&distance>5&&state.maneuverAttempts[unit]===0&&planar(car)<.2;
+    if(sideEntry&&!pending[unit]&&!state.maneuvers[unit])progress.wait=Math.max(progress.wait,2+dt);
     if(!front&&!isAtSlot&&goalBlocked&&!pending[unit]&&!state.maneuvers[unit])progress.wait=Math.max(progress.wait,2+dt);
     if(!isAtSlot&&!pending[unit]&&!state.maneuvers[unit]&&progress.wait>2&&planar(car)<.2&&state.sceneStableFor[unit]>=.5&&state.maneuverAttempts[unit]<2&&state.planningSpent[unit]<15){
       progress.wait=0;state.planning[unit]=true;
       const candidates=[0,-3.2,3.2,-5,5].map(side=>({...pointAt(a,side,finalForward),yaw:a.yaw}));
+      if(crosswise){
+        for(const angle of [Math.PI/2,-Math.PI/2,Math.PI/4,-Math.PI/4]){
+          const yaw=a.yaw+angle;
+          const spacing=SUSPECT.length/2+extent(angle,VEHICLES[model].length,VEHICLES[model].width).forward+.65;
+          candidates.push({...pointAt(a,0,front?spacing:-spacing),yaw});
+        }
+      }
       const clear=candidates.filter(p=>{
         if(state.failedParkingGoals![unit].some(f=>Math.hypot(f.x-p.x,f.z-p.z)<.25&&Math.abs(normalizeAngle(f.yaw-p.yaw))<.1))return false;
         const box=carBox({...drivingCar,...p},.35);
@@ -382,7 +392,9 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
       });
       // A player's angled car may already occupy the nominal rear slot. Pick
       // an actually free adjacent direction rather than trying to park through it.
-      const selected=clear.find(p=>p.x===goal.x&&p.z===goal.z)??clear.sort((p,q)=>Math.hypot(p.x-car.x,p.z-car.z)-Math.hypot(q.x-car.x,q.z-car.z))[0];
+      const cost=(p:typeof goal)=>Math.hypot(p.x-car.x,p.z-car.z)+Math.abs(normalizeAngle(p.yaw-car.yaw))*4;
+      clear.sort((p,q)=>cost(p)-cost(q));
+      const selected=(!crosswise&&clear.find(p=>p.x===goal.x&&p.z===goal.z))||clear[0];
       if(!selected){state.maneuverAttempts[unit]++;state.planning[unit]=false;state.reason=`0${unit+2} 沒有可用補位空間`;return stop;}
       goal=selected;state.parkingGoal[unit]=selected;progress.best=Math.hypot(goal.x-car.x,goal.z-car.z);progress.wait=0;
       const ordered=[selected,...clear.filter(p=>p!==selected)].slice(0,5);
