@@ -21,6 +21,7 @@ export interface NetworkDriver {
  blockedRoads?:Record<string,number>;
  turnaround?:{start:DrivingCar;elapsed:number;checkIn:number;clear:boolean};
  narrowTurn?:{origin:DrivingCar;search:ReturnType<typeof createIncidentSearch>;plan?:IncidentManeuver};
+ pendingTurn?:{edge:string;from:string;targetId:string;expires:number};
  turnCommandAt?:number;
  turnaroundCooldown?:number;turnaroundReason?:string;turnaroundStopping?:boolean;
 }
@@ -77,15 +78,28 @@ export function escapeRoute(network:RoadNetwork,state:NetworkDriver,car:CarSnaps
 }
 
 /** Follow a reachable road corridor; missing routes brake rather than cross scenery. */
-export function chaseRoute(network:RoadNetwork,state:NetworkDriver,car:DrivingCar,target:CarSnapshot,time:number,grip:number,gap=15,neighbors:DrivingCar[]=[],allowOvertake=false,allowTurnaround=false,targetLocation?:RoadLocation){
+export function chaseRoute(network:RoadNetwork,state:NetworkDriver,car:DrivingCar,target:CarSnapshot,time:number,grip:number,gap=15,neighbors:DrivingCar[]=[],allowOvertake=false,allowTurnaround=false,targetLocation?:RoadLocation,targetId="target"){
  state.location=locateRoad(network,car,state.location);const goal=targetLocation??locateRoad(network,target),location=state.location;
  const dt=Math.max(0,Math.min(.1,time-state.lastTime));state.lastTime=time;
  const stopTurn={speed:0,yawError:0,remaining:0,deviation:0,arrived:false};
  const width=networkIndex(network).edges.get(location.edge)!.width;
- if(!state.narrowTurn&&allowTurnaround&&!state.turnaroundStopping&&time>=(state.turnaroundCooldown??0)&&width>=12&&width<20
-   &&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction&&relativePosition(car,target).forward< -12
-   &&Math.hypot(car.x-target.x,car.z-target.z)<80){
-  if(Math.hypot(car.speed,car.lateralSpeed)>.3)return stopTurn;
+ const narrow=width>=12&&width<20;
+ const targetBehind=relativePosition(car,target).forward < (narrow?-12:-8);
+ const eligible=allowTurnaround&&!state.turnaroundStopping&&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction&&targetBehind;
+ const pending=state.pendingTurn;
+ if(pending&&(!eligible||pending.edge!==location.edge||pending.from!==location.from||pending.targetId!==targetId||time>=pending.expires)){
+  state.pendingTurn=undefined;
+  state.turnaroundCooldown=time+1;
+ }
+ const distance=Math.hypot(car.x-target.x,car.z-target.z);
+ const considerTurn=eligible&&time>=(state.turnaroundCooldown??0)&&(distance<80||!!state.pendingTurn);
+ function brakeForTurn(){
+  state.pendingTurn??={edge:location.edge,from:location.from,targetId,expires:time+Math.min(8,2+Math.abs(car.speed)/(5*Math.max(.4,grip)))};
+  return stopTurn;
+ }
+ if(!state.narrowTurn&&considerTurn&&narrow){
+  if(Math.hypot(car.speed,car.lateralSpeed)>.3)return brakeForTurn();
+  state.pendingTurn=undefined;
   const origin={...car},end={...drivingPoint(car,-location.offset-2.7,0),yaw:car.yaw+Math.PI};
   state.narrowTurn={origin,search:createIncidentSearch(network,origin,end,origin,neighbors,20000,box=>drivingFootprintOnRoad(network,box),2.5)};
  }
@@ -114,14 +128,11 @@ export function chaseRoute(network:RoadNetwork,state:NetworkDriver,car:DrivingCa
  // Slow down before checking the existing wide-road turn. Without this step,
  // a moving unit continues around the road network and never meets the
  // stopped-speed requirement for starting the maneuver.
- if(!state.turnaround&&allowTurnaround&&time>=(state.turnaroundCooldown??0)&&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction
-   &&relativePosition(car,target).forward< -8&&Math.hypot(car.x-target.x,car.z-target.z)<80
-   &&Math.abs(car.speed)>=1.2&&networkIndex(network).edges.get(location.edge)!.width>=20
-   &&location.offset>=2&&location.offset<=3.5&&turnaroundAreaClear(network,car,neighbors)){
-  return {speed:0,yawError:0,remaining:0,deviation:0,arrived:false};
+ if(!state.turnaround&&considerTurn&&width>=20&&location.offset>=2&&location.offset<=3.5
+   &&Math.abs(car.speed)>=1.2&&turnaroundAreaClear(network,car,neighbors)){
+  return brakeForTurn();
  }
- if(!state.turnaround&&allowTurnaround&&time>=(state.turnaroundCooldown??0)&&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction
-   &&relativePosition(car,target).forward< -8&&Math.hypot(car.x-target.x,car.z-target.z)<80&&Math.abs(car.speed)<1.2&&Math.abs(car.lateralSpeed)<.5){
+ if(!state.turnaround&&considerTurn&&Math.abs(car.speed)<1.2&&Math.abs(car.lateralSpeed)<.5){
   const edge=networkIndex(network).edges.get(location.edge)!,line=locationSegment(network,location).yaw;
   const heading=Math.atan2(Math.sin(car.yaw-line),Math.cos(car.yaw-line));
   if(edge.width>=20&&location.offset>=2&&location.offset<=3.5&&Math.abs(heading)<.15){
@@ -130,6 +141,7 @@ export function chaseRoute(network:RoadNetwork,state:NetworkDriver,car:DrivingCa
    }else state.turnaroundCooldown=time+1;
   }
  }
+ if(width>=20)state.pendingTurn=undefined;
  if(state.turnaround){
   const turn=state.turnaround;turn.elapsed+=dt;turn.checkIn-=dt;
   if(turn.checkIn<=0){turn.clear=turnaroundAreaClear(network,turn.start,neighbors);turn.checkIn=.1;}

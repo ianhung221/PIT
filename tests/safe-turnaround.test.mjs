@@ -140,3 +140,66 @@ test('after turning, backup follows a moving player and closes distance',async t
   }finally{sim.dispose();}
  }
 });
+
+test('moving leader passes 80 m during braking and backup resumes reverse-direction travel',async()=>{
+ await RAPIER.init();
+ for(const [width,model,loop] of [[16,'patrol',false],[22,'suv',false],[16,'patrol',true]]){
+  const n=network(width);
+  n.nodes[0].z=1200;n.edges[0].length=1600;n.bounds.maxZ=1250;
+  if(loop){
+   const corners=[['c',200,-400],['d',200,-600],['e',0,-600]];
+   for(const [id,x,z] of corners)n.nodes.push({id,x,z,radius:16});
+   for(const [a,b] of [['b','c'],['c','d'],['d','e'],['e','b']]){
+    n.edges.push({...n.edges[0],id:a+b,a,b,length:200});
+   }
+   n.bounds.maxX=250;n.bounds.minZ=-650;
+  }
+  const sim=physicalWorld(model);
+  try{
+   installNetwork(sim,n);
+   const backup=sim.vehicle,leader=sim.add('patrol',-2.7,loop?-35:55);
+   backup.body.setTranslation({x:2.7,y:-.315,z:0},true);
+   backup.body.setLinvel({x:0,y:0,z:-15},true);
+   leader.body.setRotation({x:0,y:1,z:0,w:0},true);
+   leader.body.setLinvel({x:0,y:0,z:20},true);
+   const driver=makeNetworkDriver('moving-leader');
+   let crossed=false,done=false,hadLoop=false;
+   for(let f=0;f<60*45;f++){
+    const car={...physicsSnapshot(backup),model},target={...physicsSnapshot(leader),model:'patrol'};
+    const control=chaseRoute(n,driver,car,target,f/60,1,14,[target],false,true);
+    hadLoop ||= driver.route.length>2;
+    crossed ||= !!driver.pendingTurn&&Math.hypot(car.x-target.x,car.z-target.z)>80;
+    assert.ok(drivingFootprintOnRoad(n,carBox(car,.1)));
+    if(driver.turnaroundReason?.startsWith('已完成')&&backup.body.linvel().z>2){done=true;break;}
+    driveVehicleTarget(backup,control);driveVehicleTarget(leader,{speed:20,yawError:0});sim.world.step();
+   }
+   if(loop)assert.ok(hadLoop);
+   assert.ok(crossed);assert.ok(done);
+  }finally{sim.dispose();}
+ }
+});
+
+test('braking intent expires or clears when the command, road position, or leader changes',()=>{
+ for(const reason of ['time','command','junction','leader','direction']){
+  const n=network(16),driver=makeNetworkDriver('cancel-preparation'),car={...unit,speed:15};
+  const target={...unit,x:-2.7,z:55,yaw:Math.PI};
+  chaseRoute(n,driver,car,target,0,1,14,[target],false,true,undefined,'player');
+  assert.ok(driver.pendingTurn);
+  const next={...target,z:90,yaw:reason==='direction'?0:Math.PI};
+  chaseRoute(n,driver,{...car,z:reason==='junction'?95:0},next,reason==='time'?10:.1,1,14,[next],false,reason!=='command',undefined,reason==='leader'?'support':'player');
+  assert.equal(driver.pendingTurn,undefined);assert.equal(driver.narrowTurn,undefined);
+ }
+});
+
+test('opposing suspect does not make backup abandon a forward-moving player',async()=>{
+ const {stepNetworkSupport,makeNetworkSupport}=await import('../lib/networkSupport.ts');
+ const n=network(16),player={...unit,z:-25,speed:12},suspect={...unit,x:-2.7,z:15,yaw:Math.PI,speed:12};
+ const supports=[{...unit,speed:12},{...unit,z:20,speed:12}];
+ const formation=stepNetworkSupport(makeNetworkSupport(),{network:n,player,suspect,supports,available:[true,true],playerAvailable:true,command:null,commandAt:0,grip:1,dt:1/60});
+ for(const [index,slot] of formation.slots.entries()){
+  assert.equal(slot.target,player);
+  const driver=makeNetworkDriver('forward-formation');
+  chaseRoute(n,driver,supports[index],slot.target,0,1,slot.gap,[suspect,player],false,true);
+  assert.equal(driver.pendingTurn,undefined);assert.equal(driver.narrowTurn,undefined);
+ }
+});
