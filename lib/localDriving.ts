@@ -96,6 +96,12 @@ export function stepLocalDriving(state:LocalDrivingState,input:LocalDrivingInput
  if(state.mode==='passing'){
   const moving=state.passVehicleId?observation.cars.find(c=>c.id===state.passVehicleId):undefined;
   if(moving){state.passPoint={x:moving.x,z:moving.z};state.passSpeed=Math.max(0,moving.speed);}
+  // A stopped vehicle may have joined traffic while we were passing it.
+  // Once it pulls away, return to the lane when the corridor is clear.
+  if(moving&&!state.overtaking&&moving.speed>Math.abs(car.speed)+2&&relativePosition(car,moving).forward>12){
+   state.passPoint=undefined;
+   state.passVehicleId=undefined;
+  }
   if(state.overtaking&&!input.allowOvertake&&localCorridorClear(input,-state.offset,16)){
    state.overtaking=false;state.passVehicleId=undefined;state.passPoint=undefined;state.clearFor=2;state.reason='接替完成或收到新指令，安全回到隊形';
   }

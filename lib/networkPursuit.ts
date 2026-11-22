@@ -10,6 +10,8 @@ import {localCorridorClear} from './localDriving.ts';
 import {chooseObservedExit} from './suspectEscapeChoice.ts';
 import type {SuspectDifficulty} from './gameConfig.ts';
 import {turnaroundAreaClear} from './safeTurnaround.ts';
+import {createIncidentSearch,advanceIncidentSearch,driveIncidentManeuver,type IncidentManeuver} from './incidentManeuver.ts';
+import {drivingPoint} from './drivingObservation.ts';
 
 export interface NetworkDriver {
  location?:RoadLocation;route:DirectedRoad[];points:RoutePoint[];progress:{index:number};nextPlan:number;
@@ -18,6 +20,8 @@ export interface NetworkDriver {
  threatFor?:number;escapeNode?:string;
  blockedRoads?:Record<string,number>;
  turnaround?:{start:DrivingCar;elapsed:number;checkIn:number;clear:boolean};
+ narrowTurn?:{origin:DrivingCar;search:ReturnType<typeof createIncidentSearch>;plan?:IncidentManeuver};
+ turnCommandAt?:number;
  turnaroundCooldown?:number;turnaroundReason?:string;turnaroundStopping?:boolean;
 }
 export const makeNetworkDriver=(seed:string):NetworkDriver=>({route:[],points:[],progress:{index:0},nextPlan:0,random:createSeededRandom(seed),goal:'',blocked:false,laneOffset:0,lastTime:0,local:makeLocalDriving()});
@@ -38,6 +42,7 @@ function installRoute(network:RoadNetwork,state:NetworkDriver,route:DirectedRoad
 }
 export function escapeRoute(network:RoadNetwork,state:NetworkDriver,car:CarSnapshot,time:number,grip:number,laneOffset=0,neighbors?:DrivingCar[],difficulty:SuspectDifficulty='basic',laneTarget?:number){
  const dt=Math.max(0,Math.min(.1,time-state.lastTime));state.lastTime=time;
+
  state.location=locateRoad(network,car,state.location);
  if(neighbors&&(!state.observation||time-state.observation.at>=.15||time<state.observation.at))state.observation=observeDriving(network,{...car,model:'suspect'},neighbors,time);
  state.threatFor=state.observation?.cars.length?(state.threatFor??0)+dt:0;
@@ -75,9 +80,44 @@ export function escapeRoute(network:RoadNetwork,state:NetworkDriver,car:CarSnaps
 export function chaseRoute(network:RoadNetwork,state:NetworkDriver,car:DrivingCar,target:CarSnapshot,time:number,grip:number,gap=15,neighbors:DrivingCar[]=[],allowOvertake=false,allowTurnaround=false,targetLocation?:RoadLocation){
  state.location=locateRoad(network,car,state.location);const goal=targetLocation??locateRoad(network,target),location=state.location;
  const dt=Math.max(0,Math.min(.1,time-state.lastTime));state.lastTime=time;
+ const stopTurn={speed:0,yawError:0,remaining:0,deviation:0,arrived:false};
+ const width=networkIndex(network).edges.get(location.edge)!.width;
+ if(!state.narrowTurn&&allowTurnaround&&!state.turnaroundStopping&&time>=(state.turnaroundCooldown??0)&&width>=12&&width<20
+   &&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction&&relativePosition(car,target).forward< -12
+   &&Math.hypot(car.x-target.x,car.z-target.z)<80){
+  if(Math.hypot(car.speed,car.lateralSpeed)>.3)return stopTurn;
+  const origin={...car},end={...drivingPoint(car,-location.offset-2.7,0),yaw:car.yaw+Math.PI};
+  state.narrowTurn={origin,search:createIncidentSearch(network,origin,end,origin,neighbors,20000,box=>drivingFootprintOnRoad(network,box),2.5)};
+ }
+ if(state.narrowTurn){
+  const turn=state.narrowTurn;
+  if(allowTurnaround&&drivingFootprintOnRoad(network,carBox(car,.1))){
+   if(!turn.plan){
+    const result=advanceIncidentSearch(turn.search,.35,12);
+    if(!result.done)return stopTurn;
+    turn.plan=result.plan??undefined;
+   }
+   if(turn.plan){
+    const control=driveIncidentManeuver(turn.plan,network,car,turn.origin,neighbors,dt,grip,box=>drivingFootprintOnRoad(network,box));
+    if(control.status==='driving')return {...stopTurn,speed:control.speed,yawError:control.yawError};
+    state.turnaroundReason=control.status==='done'?'已完成迴轉，重新追蹤':'迴轉受阻，重新規劃';
+   }else state.turnaroundReason='無可用調頭路徑，重新規劃';
+  }else state.turnaroundReason='取消迴轉，先安全停下';
+  turn.search.return(null);state.narrowTurn=undefined;state.turnaroundStopping=true;state.turnaroundCooldown=time+10;
+  return stopTurn;
+ }
  if(state.turnaround&&!allowTurnaround){state.turnaround=undefined;state.turnaroundCooldown=time+10;state.turnaroundReason='取消迴轉，先安全停下';state.turnaroundStopping=true;}
  if(state.turnaroundStopping){
   if(Math.hypot(car.speed,car.lateralSpeed)<.4){state.turnaroundStopping=false;state.location=undefined;state.points=[];state.goalKey='';state.nextPlan=time;}
+  return {speed:0,yawError:0,remaining:0,deviation:0,arrived:false};
+ }
+ // Slow down before checking the existing wide-road turn. Without this step,
+ // a moving unit continues around the road network and never meets the
+ // stopped-speed requirement for starting the maneuver.
+ if(!state.turnaround&&allowTurnaround&&time>=(state.turnaroundCooldown??0)&&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction
+   &&relativePosition(car,target).forward< -8&&Math.hypot(car.x-target.x,car.z-target.z)<80
+   &&Math.abs(car.speed)>=1.2&&networkIndex(network).edges.get(location.edge)!.width>=20
+   &&location.offset>=2&&location.offset<=3.5&&turnaroundAreaClear(network,car,neighbors)){
   return {speed:0,yawError:0,remaining:0,deviation:0,arrived:false};
  }
  if(!state.turnaround&&allowTurnaround&&time>=(state.turnaroundCooldown??0)&&location.edge===goal.edge&&location.from!==goal.from&&!location.nearJunction

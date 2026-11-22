@@ -70,6 +70,43 @@ test('03 substitutes when 02 is unavailable; no available unit cannot become the
  assert.equal(none.candidate,null);assert.equal(none.leader,null);
 });
 
+test('two units follow a player accelerating from rest without a prolonged passing maneuver',async t=>{
+ await RAPIER.init();
+ const n={...network,version:1,seed:'START',nodes:network.nodes.map(p=>({...p,radius:16})),objects:[],towns:[],bounds:{minX:-100,maxX:100,minZ:-550,maxZ:50},spawn:{edge:'ab',from:'a',distance:50}};
+ for(const grip of [1,.58]){
+  const sim=physicalWorld();
+  try{
+   installNetwork(sim,n);sim.remove(sim.vehicle);
+   const models=['patrol','suspect','patrol','suv'];
+   const vehicles=models.map((kind,i)=>sim.add(kind,2.7,[-80,-112,-65,-50][i]));
+   const state=makeNetworkSupport(),drivers=[makeNetworkDriver('02'),makeNetworkDriver('03')];
+   const starts=[null,null],gaps=[],contacts=[0,0];
+   for(let frame=0;frame<=600;frame++){
+    const [player,suspect,...supports]=vehicles.map((v,i)=>({...physicsSnapshot(v),model:models[i],id:String(i)}));
+    const formation=stepNetworkSupport(state,{network:n,player,suspect,supports,available:[true,true],playerAvailable:true,command:null,commandAt:0,grip,dt:1/60});
+    driveVehicleTarget(vehicles[0],{speed:18,yawError:-player.yaw},grip);
+    driveVehicleTarget(vehicles[1],{speed:18,yawError:-suspect.yaw},grip);
+    for(let unit=0;unit<2;unit++){
+     const slot=formation.slots[unit],car=supports[unit];
+     if(car.speed>.5&&starts[unit]===null)starts[unit]=frame/60;
+     driveVehicleTarget(vehicles[unit+2],chaseRoute(n,drivers[unit],car,slot.target,frame/60,grip,slot.gap,[player,suspect,supports[1-unit]],slot.allowOvertake),grip);
+    }
+    if(frame===300||frame===600)gaps.push(supports.map(car=>Math.hypot(car.x-player.x,car.z-player.z)));
+    sim.world.step();
+    for(let unit=0;unit<2;unit++)for(let i=0;i<vehicles[unit+2].body.numColliders();i++){
+     sim.world.contactPairsWith(vehicles[unit+2].body.collider(i),other=>{
+      if(other.parent()?.handle===vehicles[0].body.handle||other.parent()?.handle===vehicles[3-unit].body.handle)contacts[unit]++;
+     });
+    }
+   }
+   t.diagnostic(JSON.stringify({grip,starts,gaps,contacts}));
+   assert.ok(starts.every(time=>time!==null&&time<1));
+   assert.ok(gaps[1][1]<90);
+   assert.deepEqual(contacts,[0,0]);
+  }finally{sim.dispose();}
+ }
+});
+
 test('Q5 candidate physically passes a moving player before claiming lead',async t=>{
  await RAPIER.init();
  const n={...network,version:1,seed:'TAKEOVER',nodes:network.nodes.map(p=>({...p,radius:16})),objects:[],towns:[],bounds:{minX:-100,maxX:100,minZ:-550,maxZ:50},spawn:{edge:'ab',from:'a',distance:50}};

@@ -51,10 +51,23 @@ export function nearbyDrivingObjects(n:RoadNetwork,car:{x:number;z:number},radiu
 }
 export function drivingFootprintOnRoad(n:RoadNetwork,box:DrivingBox){
  const cells=staticIndex(n).surfaces;
- return [-1,0,1].every(side=>[-1,0,1].every(forward=>{
-  const p=drivingPoint(box,side*box.halfX,forward*box.halfZ);
-  return (cells.get(`${Math.floor(p.x/64)},${Math.floor(p.z/64)}`)??[]).some(poly=>poly.every((a,i)=>{const b=poly[(i+1)%poly.length];return (b.x-a.x)*(p.z-a.z)-(b.z-a.z)*(p.x-a.x)>=-1e-6;}));
- }));
+ const cos=Math.cos(box.yaw),sin=Math.sin(box.yaw);
+ for(let side=-1;side<=1;side++)for(let forward=-1;forward<=1;forward++){
+  const x=box.x+cos*side*box.halfX-sin*forward*box.halfZ;
+  const z=box.z-sin*side*box.halfX-cos*forward*box.halfZ;
+  const polygons=cells.get(`${Math.floor(x/64)},${Math.floor(z/64)}`);
+  let supported=false;
+  if(polygons)for(const polygon of polygons){
+   let inside=true;
+   for(let i=0;i<polygon.length;i++){
+    const a=polygon[i],b=polygon[(i+1)%polygon.length];
+    if((b.x-a.x)*(z-a.z)-(b.z-a.z)*(x-a.x)<-1e-6){inside=false;break;}
+   }
+   if(inside){supported=true;break;}
+  }
+  if(!supported)return false;
+ }
+ return true;
 }
 /** NetworkWorld installs a flat supporting floor inside these bounds. This is
  * for short incident manoeuvres only, not a replacement for road routing.

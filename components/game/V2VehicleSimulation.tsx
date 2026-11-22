@@ -417,7 +417,9 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         const target=activeBlockade?currentSuspect:slot.target;
         let targetLocation=targetLocations.get(target);
         if(!targetLocation){targetLocation=locateRoad(network,target);targetLocations.set(target,targetLocation);}
-        const routeControl=chaseRoute(network,driver,{...car,model:unit===0?'patrol':'suv'},target,state.elapsed,grip,activeBlockade?16+unit*6:slot.gap,neighbors,slot.allowOvertake,!activeBlockade&&slot.target===currentSuspect,targetLocation);
+        const commandChanged=driver.turnCommandAt!==undefined&&driver.turnCommandAt!==state.commandAt;
+        const routeControl=chaseRoute(network,driver,{...car,model:unit===0?'patrol':'suv'},target,state.elapsed,grip,activeBlockade?16+unit*6:slot.gap,neighbors,slot.allowOvertake,!activeBlockade&&!commandChanged,targetLocation);
+        driver.turnCommandAt=state.commandAt;
         if(driver.turnaroundReason&&driver.turnaroundReason!==previousTurnNotice)logRuntimeEvent(state,`0${unit+2} 後援：${driver.turnaroundReason}`);
         const touchingTarget=()=>{
           let touching=false;

@@ -15,12 +15,15 @@ const prepareObstacle=(box:DrivingBox):PreparedObstacle=>{
 
 /** Short car-shaped forward/reverse arcs, not a point path or chassis motor.
  * Search is bounded and only used after a low-speed approach stalls. */
-export function* createIncidentSearch(network:RoadNetwork,car:DrivingCar,goal:Pose,incident:Pose,neighbors:DrivingCar[],maxNodes=5000):Generator<number,IncidentManeuver|null,void>{
+export function* createIncidentSearch(network:RoadNetwork,car:DrivingCar,goal:Pose,incident:Pose,neighbors:DrivingCar[],maxNodes=5000,withinSurface?:(box:DrivingBox)=>boolean,goalWeight=1.3):Generator<number,IncidentManeuver|null,void>{
  const rear=vehiclePhysicsConfig(car.model??'patrol').rearZ;
  const objects=nearbyDrivingObjects(network,incident,36);
  const obstacles=[...objects,...neighbors.map(c=>carBox(c,.2))].map(prepareObstacle);
  const footprint=carBox(car,.35);
- const clear=(p:Pose)=>incidentPoseClear(network,{x:p.x,z:p.z,yaw:p.yaw,halfX:footprint.halfX,halfZ:footprint.halfZ},incident,obstacles);
+ const clear=(p:Pose)=>{
+  const box={x:p.x,z:p.z,yaw:p.yaw,halfX:footprint.halfX,halfZ:footprint.halfZ};
+  return (!withinSurface||withinSurface(box))&&incidentPoseClear(network,box,incident,obstacles);
+ };
  if(!clear(car)||!clear(goal))return null;
  type Node={pose:Pose;gear:1|-1;cost:number;score:number;parent:Node|null;arc:ManeuverPoint[]};
  const heap:Node[]=[],seen=new Map<string,number>();
@@ -52,7 +55,7 @@ export function* createIncidentSearch(network:RoadNetwork,car:DrivingCar,goal:Po
     const cost=node.cost+steps*.25+(gear<0?.3:0)+(node.parent&&node.gear!==gear?2:0);
     const key=`${Math.round(p.x/.3)},${Math.round(p.z/.3)},${Math.round(p.yaw/.1)},${gear}`;
     if(cost>=(seen.get(key)??Infinity))continue;seen.set(key,cost);
-    push({pose:p,gear,cost,score:cost+heuristic(p)*1.3,parent:node,arc:arc.slice()});
+    push({pose:p,gear,cost,score:cost+heuristic(p)*goalWeight,parent:node,arc:arc.slice()});
    }
   }
  }
@@ -111,7 +114,7 @@ function incidentPoseClear(network:RoadNetwork,box:DrivingBox,incident:Pose,obst
  return true;
 }
 
-export function driveIncidentManeuver(plan:IncidentManeuver,network:RoadNetwork,car:DrivingCar,incident:Pose,neighbors:DrivingCar[],dt:number,grip:number){
+export function driveIncidentManeuver(plan:IncidentManeuver,network:RoadNetwork,car:DrivingCar,incident:Pose,neighbors:DrivingCar[],dt:number,grip:number,withinSurface?:(box:DrivingBox)=>boolean){
  plan.elapsed+=dt;
  const stop=(status:'blocked'|'done',reason='')=>({speed:0,yawError:0,status,reason});
  if(!plan.points.length)return stop('done');
@@ -132,7 +135,10 @@ export function driveIncidentManeuver(plan:IncidentManeuver,network:RoadNetwork,
  if(distance(car,plan.points[nearest])>2||plan.elapsed>45)return stop('blocked','偏離路徑或機動逾時');
  const obstacles=[...nearbyDrivingObjects(network,car,10),...neighbors.flatMap(c=>[0,.75].map(t=>({...carBox(c,.2),...drivingPoint(c,c.lateralSpeed*t,c.speed*t)})))].map(prepareObstacle);
  if(!incidentPoseClear(network,carBox(car,.15),incident,obstacles))return stop('blocked','目前車身安全空間不足');
- for(let i=nearest;i<=Math.min(end,nearest+12);i++)if(!incidentPoseClear(network,carBox({...car,...plan.points[i]},.2),incident,obstacles))return stop('blocked','前方路徑安全空間不足');
+ for(let i=nearest;i<=Math.min(end,nearest+12);i++){
+  const footprint=carBox({...car,...plan.points[i]},.2);
+  if((withinSurface&&!withinSurface(footprint))||!incidentPoseClear(network,footprint,incident,obstacles))return stop('blocked','前方路徑安全空間不足');
+ }
  const routeTarget=axle(plan.points[Math.min(end,nearest+6)]);
  // At a gear change the last arc is short. Aim along its tangent rather than
  // chasing a point beside the axle, which demands an impossible last-second turn.
