@@ -409,3 +409,49 @@ test('both model assignments physically approach and park around a braking, unlo
   }finally{sim.dispose();}
  }
 });
+
+test('aligned backup considers a crosswise parking goal when a parked colleague blocks the straight slot',()=>{
+ const state=makeBlockade(),suspect={...car(0,0),model:'suspect'},self=car(3,15),player=car(0,-4.4),other=car(0,9);
+ Object.assign(state,{phase:'approaching',anchor:{...suspect,front:5.5,rear:5.5},frontUnit:1,playerCovered:[true,false]});
+ for(let frame=0;frame<150;frame++)blockadeControl(state,0,self,suspect,[suspect,player,other],road,1/60,1);
+ assert.ok(state.parkingGoal?.[0],state.reason);
+ assert.ok(Math.abs(Math.sin(state.parkingGoal[0].yaw))>.5);
+});
+
+test('02 drives into the alternative slot with a stationary vehicle behind it',async t=>{
+ await RAPIER.init();
+ for(const sign of [1,-1]){
+  const sim=physicalWorld('suspect');
+  try{
+   installNetwork(sim,network);
+   const unit=sim.add('patrol',5,sign*7),player=sim.add('patrol',0,-sign*5),other=sim.add('suv',0,sign*9);
+   const state=makeBlockade();let held=false,firstMotion=null,heldAt=null;
+   for(let frame=0;frame<3600;frame++){
+    const snap=(v,model)=>({...physicsSnapshot(v),model});
+    const suspect=snap(sim.vehicle,'suspect'),self=snap(unit,'patrol'),p=snap(player,'patrol'),o=snap(other,'suv');
+    stepBlockade(state,{road,index:0,suspect,player:p,supports:[self,o],available:[true,false],dt:1/60});
+    const ctrl=blockadeControl(state,0,self,suspect,[suspect,p,o],road,1/60,1);
+    driveVehicleTarget(unit,ctrl??{speed:0,yawError:0});
+    for(const v of [sim.vehicle,player,other])driveVehicleTarget(v,{speed:0,yawError:0});
+    sim.world.step();
+    if(firstMotion===null&&Math.abs(self.speed)>.15)firstMotion=frame/60;
+    if(state.settled[0]>.8&&controlsDeparture(self,suspect)){held=true;heldAt=frame/60;break;}
+   }
+   t.diagnostic(JSON.stringify({sign,held,firstMotion,heldAt,planningSeconds:state.planningSpent?.[0],reason:state.reason,goal:state.parkingGoal?.[0],pos:physicsSnapshot(unit).z}));
+   assert.ok(held);
+  }finally{sim.dispose();}
+ }
+});
+
+test('occupied slots stay idle until the blocking vehicle moves clear',()=>{
+ const state=makeBlockade(),suspect={...car(0,0),model:'suspect'},self=car(3,15),player=car(0,-4.4),other=car(0,5);
+ Object.assign(state,{phase:'approaching',anchor:{...suspect,front:5.5,rear:5.5},frontUnit:1,playerCovered:[true,false]});
+ const step=()=>blockadeControl(state,0,self,suspect,[suspect,player,other],road,1/60,1);
+ for(let frame=0;frame<150;frame++)step();
+ const waiting=state.occupiedAt?.[0];assert.ok(waiting);
+ for(let frame=0;frame<180;frame++)assert.equal(step().speed,0);
+ assert.equal(state.occupiedAt[0],waiting);assert.equal(state.planningSpent[0],0);
+ other.z=9;
+ for(let frame=0;frame<60&&!state.parkingGoal[0];frame++)step();
+ assert.ok(state.parkingGoal[0]);
+});

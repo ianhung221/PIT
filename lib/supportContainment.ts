@@ -41,6 +41,7 @@ export interface BlockadeState {
   approachProgress?:[{best:number;wait:number}|null,{best:number;wait:number}|null];
   parkingGoal?:[(Point&{yaw:number})|null,(Point&{yaw:number})|null];
   failedParkingGoals?:[(Point&{yaw:number})[],(Point&{yaw:number})[]];
+  occupiedAt?:[(Point & {yaw:number})[]|null,(Point & {yaw:number})[]|null];
   parkingWait?:number;
   parkingAttempts?:number;
   parkingRecovery?:{phase:'shift'|'align';sideSign:number;elapsed:number;checkIn:number;clear:boolean};
@@ -213,7 +214,7 @@ export function stepBlockade(state: BlockadeState, input: { road: GeneratedRoad;
     state.contactHold=[null,null];
     state.targetHeadingAtAssignment=suspect.yaw;
     state.frontDistance=undefined;state.advancingFor=0;
-    state.anchor = anchor; state.phase = "approaching"; state.elapsed = 0;
+    state.occupiedAt=undefined;state.anchor = anchor; state.phase = "approaching"; state.elapsed = 0;
     state.parkingDirection=[null,null];
     state.playerCovered=playerCoverage(suspect,input.player,anchor.yaw);
     const frontPosition = blockadeLocal(anchor, supports[state.frontUnit]);
@@ -355,6 +356,17 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
     const progress=state.approachProgress[unit]??{best:distance,wait:0};state.approachProgress[unit]=progress;
     if(distance<progress.best-.2){progress.best=distance;progress.wait=0;}else progress.wait+=dt;
     const stop={speed:0,yawError:0,arrived:false,modeChanged:false};
+    const occupied=state.occupiedAt?.[unit];
+    if(occupied){
+      const changed=occupied.length!==neighbors.length||occupied.some((before,i)=>{
+        const after=neighbors[i];
+        return Math.hypot(after.x-before.x,after.z-before.z)>.7||Math.abs(normalizeAngle(after.yaw-before.yaw))>.25;
+      });
+      if(!changed||changing)return stop;
+      state.occupiedAt![unit]=null;
+      state.failedParkingGoals[unit]=[];
+      progress.wait=2+dt;
+    }
     const isAtSlot=state.parkingGoal[unit]
       ?distance<.7&&Math.abs(normalizeAngle(goal.yaw-car.yaw))<.25&&planar(car)<.65&&planar(suspect)<1.2
       :containmentPose(unit,car,suspect,a.yaw,front);
@@ -378,24 +390,31 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
     if(!isAtSlot&&!pending[unit]&&!state.maneuvers[unit]&&progress.wait>2&&planar(car)<.2&&state.sceneStableFor[unit]>=.5&&state.maneuverAttempts[unit]<2&&state.planningSpent[unit]<15){
       progress.wait=0;state.planning[unit]=true;
       const candidates=[0,-3.2,3.2,-5,5].map(side=>({...pointAt(a,side,finalForward),yaw:a.yaw}));
-      if(crosswise){
-        for(const angle of [Math.PI/2,-Math.PI/2,Math.PI/4,-Math.PI/4]){
-          const yaw=a.yaw+angle;
-          const spacing=SUSPECT.length/2+extent(angle,VEHICLES[model].length,VEHICLES[model].width).forward+.65;
-          candidates.push({...pointAt(a,0,front?spacing:-spacing),yaw});
-        }
-      }
-      const clear=candidates.filter(p=>{
+      const usable=(p:typeof goal)=>{
         if(state.failedParkingGoals![unit].some(f=>Math.hypot(f.x-p.x,f.z-p.z)<.25&&Math.abs(normalizeAngle(f.yaw-p.yaw))<.1))return false;
         const box=carBox({...drivingCar,...p},.35);
         return controlsDeparture({...drivingCar,...p},suspect)&&localIncidentFootprintClear(network,box,a)&&!neighbors.some(c=>boxesOverlap(box,carBox(c as DrivingCar,.2)));
-      });
+      };
+      const clear=candidates.filter(usable);
+      if(crosswise||clear.length===0){
+        const reference=clear.length===0?suspect:a;
+        const angles=clear.length===0?[0,Math.PI/2,-Math.PI/2,Math.PI/4,-Math.PI/4]:[Math.PI/2,-Math.PI/2,Math.PI/4,-Math.PI/4];
+        for(const angle of angles){
+          const yaw=reference.yaw+angle;
+          const spacing=SUSPECT.length/2+extent(angle,VEHICLES[model].length,VEHICLES[model].width).forward+.65;
+          const angled={...pointAt(reference,0,front?spacing:-spacing),yaw};
+          if(usable(angled))clear.push(angled);
+        }
+      }
       // A player's angled car may already occupy the nominal rear slot. Pick
       // an actually free adjacent direction rather than trying to park through it.
       const cost=(p:typeof goal)=>Math.hypot(p.x-car.x,p.z-car.z)+Math.abs(normalizeAngle(p.yaw-car.yaw))*4;
       clear.sort((p,q)=>cost(p)-cost(q));
       const selected=(!crosswise&&clear.find(p=>p.x===goal.x&&p.z===goal.z))||clear[0];
-      if(!selected){state.maneuverAttempts[unit]++;state.planning[unit]=false;state.reason=`0${unit+2} 沒有可用補位空間`;return stop;}
+      if(!selected){
+        state.occupiedAt??=[null,null];
+        state.occupiedAt[unit]=neighbors.map(({x,z,yaw})=>({x,z,yaw}));
+        state.planning[unit]=false;state.reason=`0${unit+2} 沒有可用補位空間`;return stop;}
       goal=selected;state.parkingGoal[unit]=selected;progress.best=Math.hypot(goal.x-car.x,goal.z-car.z);progress.wait=0;
       const ordered=[selected,...clear.filter(p=>p!==selected)].slice(0,5);
       pending[unit]={search:interleaveIncidentSearches(ordered.map(p=>createIncidentSearch(network,drivingCar,p,a,neighbors as DrivingCar[])),index=>state.failedParkingGoals![unit].push({...ordered[index]})),car:{...drivingCar},goal,neighbors:neighbors.map(c=>({...c})),elapsed:0};
@@ -410,7 +429,7 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
       if(result.done){
         state.maneuverAttempts[unit]++;state.maneuvers[unit]=result.plan;pending[unit]=null;state.planning[unit]=false;progress.wait=0;
         if(result.plan?.goal){state.parkingGoal[unit]=result.plan.goal;progress.best=Math.hypot(result.plan.goal.x-car.x,result.plan.goal.z-car.z);}
-        if(!result.plan){state.parkingGoal[unit]=null;state.reason=`0${unit+2} 候選補位方向未找到路徑，保持等待`;}
+        if(!result.plan){state.parkingGoal[unit]=null;state.reason=`0${unit+2} 進場受阻，候選位置未找到可行路徑`;}
       }
       state.blockedFor[unit]=0;return stop;
     }
