@@ -274,7 +274,13 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
   if(road.network&&touchingTarget&&planar(suspect)<.6){
     const pose=blockadeLocal(suspect,car);
     const clearance=Math.abs(pose.forward)-(SUSPECT.length+VEHICLES[unit===0?'patrol':'suv'].length)/2;
-    const aligned=(front?pose.forward>0:pose.forward<0)&&Math.abs(pose.side)<.45&&Math.abs(normalizeAngle(car.yaw-suspect.yaw))<.12;
+    const headingOffset = normalizeAngle(car.yaw - suspect.yaw);
+    const travelToEnd = Math.max(0, clearance) * (front ? -1 : 1);
+    const projectedSide = pose.side - travelToEnd * Math.sin(headingOffset);
+    const aligned = (front ? pose.forward > 0 : pose.forward < 0)
+      && Math.abs(pose.side) < SUSPECT.width / 2
+      && Math.abs(projectedSide) < SUSPECT.width / 2
+      && Math.abs(headingOffset) < .25;
     const previous=state.contactHold?.[unit];
     const obstructed=neighbors.some(other=>other!==suspect&&(other as DrivingCar).id!=='suspect'&&(other as DrivingCar).model!=='suspect'&&Math.hypot(other.x-car.x,other.z-car.z)<6);
     if(aligned&&clearance<1.3&&clearance>-.5&&!obstructed){
@@ -511,7 +517,7 @@ export function blockadeControl(state: BlockadeState, unit: 0 | 1, car: CarSnaps
 export function blockadeFeedback(state: BlockadeState): Pick<RadioFeedback, "phase" | "message"> {
   if (state.phase === "waiting") return { phase: "executing", message: "已待命，等待嫌犯減速；不需再次下令" };
   if (state.phase === "missed") return { phase: "unable", message: `錯過封鎖時機：${state.reason}；繼續追蹤並保持待命` };
-  if (state.phase === "holding") return { phase: "completed", message: "可用單位已就位，持續守位；仍須確認所有出口是否受控" };
+  if (state.phase === "holding") return { phase: "executing", message: "後援已就位，持續守位中。攔停仍在評估" };
   const guarding=state.settled.findIndex((t,i)=>state.available[i]&&t>.8);
   if(guarding>=0)return {phase:'executing',message:`0${guarding+2} 已控制一個方向；其他出口尚待補位，不代表完成攔停`};
   if(state.reason&&state.maneuverAttempts?.some(attempts=>attempts>=2))

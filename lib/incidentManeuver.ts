@@ -148,5 +148,8 @@ export function driveIncidentManeuver(plan:IncidentManeuver,network:RoadNetwork,
  const rate=plan.lastYaw===undefined?0:angle(car.yaw-plan.lastYaw)/dt;plan.lastYaw=car.yaw;
  const signedSpeed=(Math.abs(car.speed)>.6?Math.sign(car.speed):start.gear)*Math.max(2,Math.abs(car.speed));
  const yawError=(curvature*signedSpeed+rate*.25)/1.8;
- return {speed:start.gear*Math.min(1.5*Math.sqrt(grip),Math.sqrt(Math.max(0,endDistance-.12)*2)),yawError,status:'driving' as const};
+ const clearForwardRun = start.gear > 0 && Math.abs(curvature) < .08;
+ const cruiseSpeed = (clearForwardRun ? 3 : 1.5) * Math.sqrt(grip);
+ const stoppingSpeed = Math.sqrt(Math.max(0, endDistance - .12) * 2);
+ return {speed:start.gear*Math.min(cruiseSpeed,stoppingSpeed),yawError,status:'driving' as const};
 }

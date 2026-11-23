@@ -18,7 +18,7 @@ for(const blocked of [false,true])test(`wheel-driven local manoeuvre near a buil
   const plan=planIncidentManeuver(n,snapshot(),goal,goal,[]);assert.ok(plan);
   let obstacle=null,stopped=false,done=false,contacts=0;
   for(let frame=0;frame<60*30;frame++){
-   if(blocked&&frame===60){
+   if(blocked&&frame===30){
     assert.equal(boxesOverlap(carBox(snapshot()),carBox({x:0,z:6,yaw:0,speed:0,lateralSpeed:0,model:'suv'})),false,'the inserted obstacle must not overlap the moving car');
     obstacle=sim.add('suv',0,6);
    }
