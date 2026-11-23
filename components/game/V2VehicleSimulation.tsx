@@ -407,6 +407,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
     [support2, support3].forEach((body, unit) => {
       const frame = measuredFrames[unit+2], position = body.translation();
       if(getVehiclePhysics(body)?.disabled||!vehicleCanPerformDriving(state.supportDamage[unit])){
+        state.supportControl[unit]={at:state.elapsed,source:'車況限制',target:'無',speed:0,yawError:0,reason:getVehiclePhysics(body)?.disabled?'穩定翻覆':'車輛無法執行駕駛'};
         driveSupport(body,0,0,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
         state.supportArrivedFor[unit]=0;return;
       }
@@ -431,6 +432,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
         const maneuver=activeBlockade&&Math.hypot(car.x-currentSuspect.x,car.z-currentSuspect.z)<55?timed('blockadeControl',()=>blockadeControl(state.blockade,unit as 0|1,car,currentSuspect,neighbors,state.road,dt,grip,touchingTarget)):null;
         const control=driver.turnaroundStopping?routeControl:maneuver??(activeBlockade&&waitForBlockadeRetry(state.blockade,car,currentSuspect)
           ?{...routeControl,speed:0,arrived:false}:routeControl);
+        state.supportControl[unit]={at:state.elapsed,source:driver.turnaroundStopping?'掉頭停車':maneuver?'封鎖控制':activeBlockade&&waitForBlockadeRetry(state.blockade,car,currentSuspect)?'等待封鎖重試':'道路追蹤',target:targetId,speed:control.speed,yawError:control.yawError,reason:'未記錄具體煞車原因，請參考封鎖與局部駕駛狀態'};
         driveSupport(body,control.yawError,control.speed,unit===0?VEHICLES.patrol.maxSpeed:VEHICLES.suv.maxSpeed,dt,grip,frame,state.supportDamage[unit]);
         state.supportArrivedFor[unit]=control.arrived?state.supportArrivedFor[unit]+dt:0;
         if(previousMode!==driver.local.mode&&['blocked','reversing','following'].includes(driver.local.mode))logRuntimeEvent(state,`0${unit+2} 後援：${driver.local.reason}`);
@@ -442,6 +444,7 @@ export function V2VehicleSimulation({ config, cameraMode, runtime, keys, onUpdat
       const maneuver = activeBlockade && state.supportAi[unit].mode === "driving"
         ? blockadeControl(state.blockade, unit as 0 | 1, car, currentSuspect, neighbors, state.road, dt, grip) : null;
       const control = maneuver ?? stepSupportAI(state.supportAi[unit], { car, road: state.road, index, slot, dt, grip, maxSpeed: unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, neighbors });
+      state.supportControl[unit]={at:state.elapsed,source:maneuver?'封鎖控制':'後援駕駛',target:'隊形目標',speed:control.speed,yawError:control.yawError,reason:'未記錄具體煞車原因'};
       if (maneuver) { state.supportAi[unit].lastX = car.x; state.supportAi[unit].lastZ = car.z; state.supportAi[unit].stalledFor = 0; }
       driveSupport(body, control.yawError, control.speed, unit === 0 ? VEHICLES.patrol.maxSpeed : VEHICLES.suv.maxSpeed, dt, grip, frame,state.supportDamage[unit]);
       state.supportArrivedFor[unit] = control.arrived ? state.supportArrivedFor[unit] + dt : 0;

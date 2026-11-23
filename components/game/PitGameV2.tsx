@@ -24,6 +24,7 @@ import { makePlayerDriving, resetPlayerDriving, noteDrivingKey } from "@/lib/pla
 import { PlayerStatus } from './PlayerStatus';
 import { FixedPhysicsStepper } from './FixedPhysicsStepper';
 import { PitDiagnosticPanel } from './PitDiagnosticPanel';
+import { createProblemReport } from './problemReport';
 import { makeDiagnostics } from '@/lib/pitDiagnostics';
 import type { MissionOutcome, RadioCommand, RadioFeedback } from "@/types/game";
 
@@ -119,6 +120,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   const [diagnostics,setDiagnostics]=useState(()=>makeDiagnostics('mission',JSON.stringify(config)));
   const [summaryReason,setSummaryReason]=useState('');
   const [showEvents,setShowEvents]=useState(false);
+  const [problemReport,setProblemReport]=useState('');
+  const [copyStatus,setCopyStatus]=useState('');
   const [cameraMode, setCameraMode] = useState<CameraMode>("chase");
   const [result, setResult] = useState<V2Result>("playing");
   const [outcome, setOutcome] = useState<MissionOutcome>("playing");
@@ -152,11 +155,18 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
   const togglePause = useCallback(() => setResult((current) => {
     if (current === "success" || current === "failed") return current;
     const next = current === "paused" ? "playing" : "paused";
+    if(next === "paused"){
+      setProblemReport(createProblemReport(runtime.current,config,process.env.NEXT_PUBLIC_BUILD_VERSION ?? "版本未知／本機開發"));
+      setCopyStatus('');
+    } else {
+      setProblemReport('');
+      setCopyStatus('');
+    }
     runtime.current.result = next;
     resetPlayerDriving(runtime.current.driving,"暫停／繼續任務");
     runtime.current.outcome = next === "paused" ? "paused" : "playing";
     return next;
-  }), []);
+  }), [config]);
   const keys = useControls(cycleCamera, togglePause, runtime);
   useEffect(() => {
     if (result !== "playing") { keys.current.clear(); resetPlayerDriving(runtime.current.driving,"任務暫停或結束"); }
@@ -216,6 +226,8 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
 
   const restart = () => {
     keys.current.clear();
+    setProblemReport('');
+    setCopyStatus('');
     runtime.current = makeV2Runtime(config);
     setHud({
       driving: makePlayerDriving(),
@@ -357,8 +369,19 @@ export function PitGameV2({ config, onExit }: { config: MissionConfig; onExit: (
       {result !== "paused" && <p className="pit-grade">PIT 評估：{debrief.successfulContacts > 0 ? "已記錄合格 PIT" : "未完成合格 PIT"}{debrief.unsafeContacts > 0 ? "；另有未授權／不安全接觸，攔停成功不抵銷違規" : ""}。</p>}
       <div className="debrief-actions">
         {result === "paused" ? <button onClick={togglePause}>繼續任務</button> : <button onClick={restart}>相同地圖再試一次</button>}
+        {result === "paused" && <button className="secondary" onClick={async()=>{
+          try {
+            if(!navigator.clipboard?.writeText)throw new Error('clipboard unavailable');
+            await navigator.clipboard.writeText(problemReport);
+            setCopyStatus('已複製，可以貼到對話。');
+          } catch {
+            setCopyStatus('無法自動複製，請選取下方文字後手動複製。');
+          }
+        }}>複製問題資料</button>}
         <button className="secondary" onClick={onExit}>返回設定</button>
       </div>
+      {result === "paused" && copyStatus && <p role="status">{copyStatus}</p>}
+      {result === "paused" && copyStatus.startsWith('無法') && <textarea aria-label="問題資料" readOnly value={problemReport} onFocus={event=>event.currentTarget.select()} style={{width:'100%',height:140}} />}
     </div></div>}
   </main>;
 }

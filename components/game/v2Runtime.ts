@@ -47,6 +47,10 @@ export interface SupportUnitSnapshot extends CarSnapshot {
   model: "patrol" | "suv";
 }
 
+export interface SupportControlDiagnostic {
+  at:number; source:string; target:string; speed:number; yawError:number; reason:string;
+}
+
 export interface V2Runtime {
   suspectRecovery:SuspectRecovery;
   pursuitEvents:PursuitEvents;
@@ -54,6 +58,7 @@ export interface V2Runtime {
   networkDrivers:[NetworkDriver,NetworkDriver,NetworkDriver];
   damageEpisodes: DamageEpisodes;
   supportDamage: [VehicleDamage,VehicleDamage];
+  supportControl: [SupportControlDiagnostic | null, SupportControlDiagnostic | null];
   decision: SuspectDecision;
   contactEpisodes: ReturnType<typeof makeContactEpisodes>;
   diagnostics: PitDiagnostics;
@@ -117,7 +122,7 @@ export function makeV2Runtime(config: MissionConfig): V2Runtime {
     pursuitEvents:makePursuitEvents(),
     networkSupport:makeNetworkSupport(),
     networkDrivers:[makeNetworkDriver(`${seed}-suspect`),makeNetworkDriver(`${seed}-02`),makeNetworkDriver(`${seed}-03`)],
-    damageEpisodes:makeDamageEpisodes(),supportDamage:[pristineDamage(),pristineDamage()],
+    damageEpisodes:makeDamageEpisodes(),supportDamage:[pristineDamage(),pristineDamage()],supportControl:[null,null],
     decision: makeSuspectDecision(config.behaviorSeed ?? seed),
     contactEpisodes: makeContactEpisodes(),
     diagnostics: makeDiagnostics('mission', JSON.stringify(config)),
